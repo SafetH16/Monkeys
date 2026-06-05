@@ -147,7 +147,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusItem() {
         if let button = statusItem.button {
-            if let image = NSImage(named: "statusBarIcon") {
+            let imgName = NSImage.Name("statusBarIcon.png")
+            let fallbackName = NSImage.Name("statusBarIcon")
+            if let image = NSImage(named: imgName) ?? NSImage(named: fallbackName) {
                 image.isTemplate = true
                 button.image = image
                 button.title = ""
