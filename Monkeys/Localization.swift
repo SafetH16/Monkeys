@@ -37,6 +37,17 @@ final class L: @unchecked Sendable {
                 .zh: "🐒 Monkeys",
                 .ko: "🐒 Monkeys",
             ],
+            "check_updates": [
+                .en: "Check for Updates...",
+                .it: "Verifica Aggiornamenti...",
+                .es: "Buscar Actualizaciones...",
+                .fr: "Rechercher des Mises à Jour...",
+                .de: "Nach Updates Suchen...",
+                .pt: "Verificar Atualizações...",
+                .ja: "アップデートを確認...",
+                .zh: "检查更新...",
+                .ko: "업데이트 확인...",
+            ],
             "enabled": [
                 .en: "✅ Enabled",
                 .it: "✅ Abilitato",

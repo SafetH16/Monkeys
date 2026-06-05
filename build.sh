@@ -31,6 +31,7 @@ swiftc -o "${BUILD_DIR}/${APP_NAME}" \
   "${SCRIPT_DIR}/Monkeys/SpeedTypeView.swift" \
   "${SCRIPT_DIR}/Monkeys/SpeedTypeWindow.swift" \
   "${SCRIPT_DIR}/Monkeys/Localization.swift" \
+  "${SCRIPT_DIR}/Monkeys/Updater.swift" \
   -framework Cocoa \
   -framework AVFoundation \
   -framework CoreGraphics \

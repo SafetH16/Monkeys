@@ -129,6 +129,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.peakWpmMenuItem.title = L.shared.sf("record_wpm", self.typingStats.getPeakWPM())
             }
         }
+        
+        // 7. Silent update check at startup
+        Updater.shared.checkForUpdates(silent: true)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -298,6 +301,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         // 8. Info + Quit
+        let updateItem = NSMenuItem(title: L.shared.s("check_updates"), action: #selector(triggerCheckUpdates), keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
+
         let infoItem = NSMenuItem(title: L.shared.s("info"), action: #selector(showInfo), keyEquivalent: "")
         infoItem.target = self
         menu.addItem(infoItem)
@@ -342,6 +349,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let lang = L.Lang(rawValue: code) else { return }
         L.shared.setLanguage(lang)
         statusItem.menu = buildMenu()
+    }
+
+    @objc private func triggerCheckUpdates() {
+        Updater.shared.checkForUpdates(silent: false)
     }
 
     @objc private func showInfo() {
