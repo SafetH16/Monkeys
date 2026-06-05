@@ -1,0 +1,25 @@
+# MonKeys Project Rules & Instructions
+
+Whenever you update the application code, you must compile, commit, and deploy the changes using the custom deploy script.
+
+## 🛠️ Build Commands
+* Run `./build.sh` to compile the app bundle. This builds:
+  `build/MonKeys.app` (macOS 13.0+ target, arm64 only, Swift 6 compiler).
+* The build output is located at: `build/MonKeys.app`.
+
+## 🚀 Deployment Instructions
+* Use the custom command `gdeploy` in the zsh terminal to commit, tag, and publish releases to GitHub.
+* Usage:
+  `gdeploy -prod "Commit message description" "v1.X.X"`
+* This command will automatically:
+  1. Compile the app bundle using `./build.sh`.
+  2. Create a compressed package `build/MonKeys.zip` of the app.
+  3. Commit all changed files to git.
+  4. Push the branch to the private GitHub repository (`SafetH16/Monkeys`).
+  5. Delete any old tag/release for the version if it exists, tag the commit, and push the tag.
+  6. Create a GitHub Release for that tag, and upload `MonKeys.zip` as a release asset.
+
+## ⚠️ Important Guidelines
+* **Do NOT leak credentials:** The GitHub PAT is embedded inside the `Updater.swift` file for private repository access. Handle this file with care and do not expose the token in Git remote URLs.
+* **Keep Swift 6 Concurrency:** Ensure all code remains strict-concurrency safe. AppDelegate is `@MainActor` isolated. All background work or nonisolated timers (e.g. `Timer.scheduledTimer`) must delegate UI tasks using `Task { @MainActor [weak self] in ... }` blocks.
+* **Release Asset Naming:** The release asset name must always be `MonKeys.zip` for the auto-updater to work.
