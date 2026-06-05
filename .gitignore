@@ -1,0 +1,6 @@
+.DS_Store
+build/
+*.zip
+*.mp3
+!Monkeys/bg_music.mp3
+*.log
