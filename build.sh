@@ -1,11 +1,11 @@
 #!/bin/bash
-# Build script for Monkeys.app
+# Build script for MonKeys.app
 # Creates a proper macOS .app bundle from the compiled Swift binary
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_NAME="Monkeys"
+APP_NAME="MonKeys"
 BUILD_DIR="${SCRIPT_DIR}/build"
 APP_BUNDLE="${BUILD_DIR}/${APP_NAME}.app"
 

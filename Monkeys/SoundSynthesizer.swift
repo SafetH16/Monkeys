@@ -1,5 +1,5 @@
 // SoundSynthesizer.swift
-// MechaKeys
+// MonKeys
 //
 // Procedural audio synthesis for mechanical keyboard sounds.
 

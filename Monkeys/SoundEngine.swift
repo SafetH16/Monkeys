@@ -1,5 +1,5 @@
 // SoundEngine.swift
-// MechaKeys
+// MonKeys
 //
 // Polyphonic audio engine for real-time mechanical keyboard sound playback.
 

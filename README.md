@@ -1,15 +1,15 @@
-# MechaKeys ⌨️🍌
+# MonKeys ⌨️🍌
 
-![MechaKeys Cover](cover.png)
+![MonKeys Cover](cover.png)
 
-**MechaKeys** è un'app macOS menu bar che trasforma la tua tastiera in una tastiera meccanica virtuale. Ogni pressione di tasto produce un suono realistico di switch meccanico, con il suono che si **prolunga finché il tasto è premuto** e un click di rilascio quando lo si lascia.
+**MonKeys** è un'app macOS menu bar che trasforma la tua tastiera in una tastiera meccanica virtuale. Ogni pressione di tasto produce un suono realistico di switch meccanico, con il suono che si **prolunga finché il tasto è premuto** e un click di rilascio quando lo si lascia.
 
 ## 📁 Struttura Progetto
 
 ```
 .
-├── MechaKeys.xcodeproj/      ← Progetto Xcode (se vuoi aprirlo in Xcode)
-├── MechaKeys/
+├── MonKeys.xcodeproj/      ← Progetto Xcode (se vuoi aprirlo in Xcode)
+├── MonKeys/
 │   ├── main.swift           ← Entry point (nasconde l'icona dal dock)
 │   ├── AppDelegate.swift    ← UI nella barra dei menu e gestione stato
 │   ├── KeyboardMonitor.swift← Tap globale sugli eventi di input
@@ -17,11 +17,11 @@
 │   ├── SoundSynthesizer.swift← Sintesi programmabile delle onde audio
 │   ├── KeySoundProfile.swift← Parametri per i profili Cherry MX (Blue, Brown, Red)
 │   ├── Info.plist           ← Configurazione (LSUIElement=true)
-│   └── MechaKeys.entitlements← Permessi dell'app
+│   └── MonKeys.entitlements← Permessi dell'app
 ├── build.sh                 ← Script di compilazione autonomo
 ├── cover.png                ← Immagine di copertina (Nano Banana)
 └── build/
-    └── MechaKeys.app        ← Il pacchetto dell'applicazione compilata
+    └── MonKeys.app        ← Il pacchetto dell'applicazione compilata
 ```
 
 ## 🏗️ Architettura
@@ -44,7 +44,7 @@ Se apporti modifiche al codice sorgente, puoi ricompilare l'app al volo senza Xc
 
 Apri l'applicazione installata:
 ```bash
-open /Applications/MechaKeys.app
+open /Applications/MonKeys.app
 ```
 
 ## ⚠️ Permessi Necessari
@@ -53,7 +53,7 @@ Al primo avvio, l'app richiederà il permesso **Input Monitoring** (Accessibilit
 
 1. macOS aprirà automaticamente la schermata delle **Impostazioni di Sistema**.
 2. Vai in **Privacy e Sicurezza** → **Accessibilità**.
-3. Abilita l'interruttore per **MechaKeys**.
+3. Abilita l'interruttore per **MonKeys**.
 4. Riavvia l'app per rendere attive le modifiche.
 
 ## 🎹 Scorciatoia Globale
