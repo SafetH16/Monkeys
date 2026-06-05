@@ -1,6 +1,6 @@
 # MonKeys ⌨️🍌
 
-![MonKeys Cover](cover.png)
+![MonKeys Icon](cover.png)
 
 **MonKeys** è un'app macOS menu bar che trasforma la tua tastiera in una tastiera meccanica virtuale. Ogni pressione di tasto produce un suono realistico di switch meccanico, con il suono che si **prolunga finché il tasto è premuto** e un click di rilascio quando lo si lascia.
 
@@ -19,7 +19,7 @@
 │   ├── Info.plist           ← Configurazione (LSUIElement=true)
 │   └── MonKeys.entitlements← Permessi dell'app
 ├── build.sh                 ← Script di compilazione autonomo
-├── cover.png                ← Immagine di copertina (Nano Banana)
+├── cover.png                ← Icona del progetto (MonKeys)
 └── build/
     └── MonKeys.app        ← Il pacchetto dell'applicazione compilata
 ```
