@@ -2,6 +2,20 @@
 
 ![MonKeys Icon](cover.png)
 
+## 🚀 Download & Installazione Rapida
+
+Per installare e avviare subito l'applicazione senza compilare il codice sorgente:
+
+1. **[Scarica l'applicazione precompilata (MonKeys.zip)](https://github.com/SafetH16/Monkeys/releases/latest/download/MonKeys.zip)**
+2. Estrai l'archivio e sposta **`MonKeys.app`** nella cartella **Applicazioni** del tuo Mac.
+3. Visto che l'app non è firmata con un account Apple Developer a pagamento, all'avvio macOS potrebbe mostrare un avviso di sicurezza. Per sbloccarla, apri il **Terminale** ed esegui:
+   ```bash
+   xattr -cr /Applications/MonKeys.app
+   ```
+4. Avvia l'app e abilita i permessi di **Accessibilità** nelle Impostazioni di Sistema per consentire il monitoraggio dei tasti.
+
+---
+
 **MonKeys** è un'app macOS menu bar che trasforma la tua tastiera in una tastiera meccanica virtuale. Ogni pressione di tasto produce un suono realistico di switch meccanico, con il suono che si **prolunga finché il tasto è premuto** e un click di rilascio quando lo si lascia.
 
 ## 📁 Struttura Progetto
