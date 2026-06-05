@@ -38,6 +38,7 @@ swiftc -o "${BUILD_DIR}/${APP_NAME}" \
   -framework ApplicationServices \
   -target arm64-apple-macosx13.0 \
   -swift-version 6 \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "${SCRIPT_DIR}/Monkeys/Info.plist" \
   -O
 
 echo "📦 Creating app bundle..."
@@ -61,9 +62,9 @@ cp "${SCRIPT_DIR}/Monkeys/statusBarIcon@2x.png" "${APP_BUNDLE}/Contents/Resource
 # Create PkgInfo
 echo -n "APPL????" > "${APP_BUNDLE}/Contents/PkgInfo"
 
-# Codesign the application bundle
+# Codesign the application bundle with entitlements
 echo "🔑 Codesigning application bundle..."
-codesign --force --deep --sign - "${APP_BUNDLE}"
+codesign --force --sign - --entitlements "${SCRIPT_DIR}/Monkeys/Monkeys.entitlements" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 
 echo "✅ Build complete!"
 echo "📍 App bundle: ${APP_BUNDLE}"
