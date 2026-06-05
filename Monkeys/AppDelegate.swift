@@ -94,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.soundEngine.setEnabled(false)
                 self.isEnabled = false
                 self.toggleMenuItem.title = "🔇 Auto-Muto (videocall)"
+                self.updateStatusItem()
             }
         }
         appProfileManager.onShouldUnmute = { [weak self] in
@@ -102,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.soundEngine.setEnabled(true)
                 self.isEnabled = true
                 self.toggleMenuItem.title = L.shared.s("enabled")
+                self.updateStatusItem()
             }
         }
         appProfileManager.start()
@@ -143,19 +145,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Menu Bar Setup
 
-    private func setupStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-
+    private func updateStatusItem() {
         if let button = statusItem.button {
-            if #available(macOS 13.0, *),
-               let image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Monkeys") {
+            if let image = NSImage(named: "statusBarIcon") {
                 image.isTemplate = true
                 button.image = image
+                button.title = ""
+                button.contentTintColor = isEnabled ? nil : NSColor.labelColor.withAlphaComponent(0.3)
             } else {
-                button.title = "⌨️"
+                button.image = nil
+                button.title = isEnabled ? "🐵" : "🤫"
             }
         }
+    }
 
+    private func setupStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        updateStatusItem()
         statusItem.menu = buildMenu()
     }
 
@@ -322,6 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isEnabled.toggle()
         toggleMenuItem.title = isEnabled ? L.shared.s("enabled") : L.shared.s("disabled")
         soundEngine.setEnabled(isEnabled)
+        updateStatusItem()
     }
 
     @objc private func toggleAutoMute() {

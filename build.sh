@@ -52,9 +52,11 @@ cp "${BUILD_DIR}/${APP_NAME}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 # Copy Info.plist
 cp "${SCRIPT_DIR}/Monkeys/Info.plist" "${APP_BUNDLE}/Contents/"
 
-# Copy Resources (AppIcon.icns & mp3)
+# Copy Resources (AppIcon.icns, mp3, status bar icons)
 cp "${SCRIPT_DIR}/Monkeys/AppIcon.icns" "${APP_BUNDLE}/Contents/Resources/"
 cp "${SCRIPT_DIR}/Monkeys/bg_music.mp3" "${APP_BUNDLE}/Contents/Resources/"
+cp "${SCRIPT_DIR}/Monkeys/statusBarIcon.png" "${APP_BUNDLE}/Contents/Resources/"
+cp "${SCRIPT_DIR}/Monkeys/statusBarIcon@2x.png" "${APP_BUNDLE}/Contents/Resources/"
 
 # Create PkgInfo
 echo -n "APPL????" > "${APP_BUNDLE}/Contents/PkgInfo"
