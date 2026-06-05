@@ -61,9 +61,9 @@ cp "${SCRIPT_DIR}/Monkeys/statusBarIcon@2x.png" "${APP_BUNDLE}/Contents/Resource
 # Create PkgInfo
 echo -n "APPL????" > "${APP_BUNDLE}/Contents/PkgInfo"
 
-# Codesign the application bundle with entitlements
+# Codesign the application bundle
 echo "🔑 Codesigning application bundle..."
-codesign --force --sign - --entitlements "${SCRIPT_DIR}/Monkeys/Monkeys.entitlements" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+codesign --force --deep --sign - "${APP_BUNDLE}"
 
 echo "✅ Build complete!"
 echo "📍 App bundle: ${APP_BUNDLE}"
