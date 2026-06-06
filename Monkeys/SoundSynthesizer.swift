@@ -35,8 +35,8 @@ final class SoundSynthesizer: @unchecked Sendable {
         }
         self.format = fmt
 
-        // Preload wax_slime.caf
-        if let url = Bundle.main.url(forResource: "wax_slime", withExtension: "caf") {
+        // Preload wax_slime.wav
+        if let url = Bundle.main.url(forResource: "wax_slime", withExtension: "wav") {
             do {
                 let file = try AVAudioFile(forReading: url)
                 if let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)) {
@@ -61,7 +61,7 @@ final class SoundSynthesizer: @unchecked Sendable {
                     }
                 }
             } catch {
-                print("SoundSynthesizer: failed to load wax_slime.caf - \(error)")
+                print("SoundSynthesizer: failed to load wax_slime.wav - \(error)")
             }
         }
     }
