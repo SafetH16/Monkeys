@@ -187,6 +187,10 @@ final class SoundSynthesizer: @unchecked Sendable {
     ///   - pitchVariation: Per-key pitch shift (`0.0 ... 1.0`).
     /// - Returns: A filled `AVAudioPCMBuffer`, or `nil`.
     func generateRelease(profile: SoundProfile, pitchVariation: Float, isLargeKey: Bool = false) -> AVAudioPCMBuffer? {
+        if profile == .waxSlime {
+            return nil
+        }
+        
         let sampleRate = Float(Self.sampleRate)
         let totalDuration = profile.releaseDuration + 0.005
         let frameCount = AVAudioFrameCount(totalDuration * sampleRate)
