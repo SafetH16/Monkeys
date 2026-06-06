@@ -29,6 +29,7 @@ enum SoundProfile: String, CaseIterable, Sendable {
     case bubbles     = "Bolle ASMR"
     case retro8bit   = "Retro 8-Bit"
     case monkey      = "Scimmia 🐒"
+    case waxSlime    = "Wax Slime ASMR"
 
     // MARK: - Click-down parameters
 
@@ -48,6 +49,7 @@ enum SoundProfile: String, CaseIterable, Sendable {
         case .bubbles:     return 400.0
         case .retro8bit:   return 2000.0
         case .monkey:      return 1800.0  // chirpy primate screech
+        case .waxSlime:    return 2000.0  // less high-pitched, more mid-range crunch
         }
     }
 
@@ -67,6 +69,7 @@ enum SoundProfile: String, CaseIterable, Sendable {
         case .bubbles:     return 0.05
         case .retro8bit:   return 0.10
         case .monkey:      return 0.60  // lots of breathy noise
+        case .waxSlime:    return 0.45  // more noise for crunchiness
         }
     }
 
@@ -86,6 +89,7 @@ enum SoundProfile: String, CaseIterable, Sendable {
         case .bubbles:     return 0.025
         case .retro8bit:   return 0.008
         case .monkey:      return 0.018  // longer chirp
+        case .waxSlime:    return 0.015  // longer tap for crunchy texture
         }
     }
 
@@ -105,6 +109,7 @@ enum SoundProfile: String, CaseIterable, Sendable {
         case .bubbles:     return 0.20
         case .retro8bit:   return 0.45
         case .monkey:      return 0.55  // loud chirp
+        case .waxSlime:    return 0.25  // softer, more relaxing
         }
     }
 
@@ -126,6 +131,7 @@ enum SoundProfile: String, CaseIterable, Sendable {
         case .bubbles:     return 60.0
         case .retro8bit:   return 300.0
         case .monkey:      return 220.0  // chest thump
+        case .waxSlime:    return 90.0  // deeper, softer thud
         }
     }
 
@@ -145,6 +151,7 @@ enum SoundProfile: String, CaseIterable, Sendable {
         case .bubbles:     return 0.060
         case .retro8bit:   return 0.015
         case .monkey:      return 0.035  // resonant
+        case .waxSlime:    return 0.070  // longer relaxing squish
         }
     }
 
@@ -166,6 +173,7 @@ enum SoundProfile: String, CaseIterable, Sendable {
         case .bubbles:     return 0.005
         case .retro8bit:   return 0.02
         case .monkey:      return 0.03
+        case .waxSlime:    return 0.020
         }
     }
 
@@ -185,6 +193,7 @@ enum SoundProfile: String, CaseIterable, Sendable {
         case .bubbles:     return 150.0
         case .retro8bit:   return 900.0
         case .monkey:      return 700.0
+        case .waxSlime:    return 300.0
         }
     }
 
@@ -206,6 +215,7 @@ enum SoundProfile: String, CaseIterable, Sendable {
         case .bubbles:     return 500.0
         case .retro8bit:   return 2500.0
         case .monkey:      return 2200.0  // chirpy upstroke
+        case .waxSlime:    return 800.0  // lower pitch release
         }
     }
 
@@ -225,6 +235,7 @@ enum SoundProfile: String, CaseIterable, Sendable {
         case .bubbles:     return 0.020
         case .retro8bit:   return 0.006
         case .monkey:      return 0.012
+        case .waxSlime:    return 0.020  // longer, relaxing release
         }
     }
 
@@ -244,6 +255,7 @@ enum SoundProfile: String, CaseIterable, Sendable {
         case .bubbles:     return 0.08
         case .retro8bit:   return 0.30
         case .monkey:      return 0.35
+        case .waxSlime:    return 0.15  // softer release
         }
     }
 }

@@ -29,13 +29,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let allProfiles: [SoundProfile] = [
         .blue, .brown, .red, .black, .silentRed, .speedSilver,
         .gateronRed, .gateronYellow, .silentBlack,
-        .typewriter, .bubbles, .retro8bit, .monkey,
+        .typewriter, .bubbles, .retro8bit, .monkey, .waxSlime,
     ]
 
     private let profileLocKeys: [String] = [
         "p_tactile_click", "p_soft_tactile", "p_light_linear", "p_heavy_linear",
         "p_quiet_light", "p_speed", "p_smooth", "p_medium", "p_quiet_heavy",
-        "p_typewriter", "p_bubbles", "p_retro", "p_monkey",
+        "p_typewriter", "p_bubbles", "p_retro", "p_monkey", "p_wax_slime",
     ]
 
     // MARK: - NSApplicationDelegate

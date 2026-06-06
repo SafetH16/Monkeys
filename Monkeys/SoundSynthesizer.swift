@@ -22,6 +22,8 @@ final class SoundSynthesizer: @unchecked Sendable {
     /// The canonical audio format used by every buffer this synthesizer creates.
     let format: AVAudioFormat
 
+    private var waxSlimeBuffer: AVAudioPCMBuffer?
+
     // MARK: - Initialisation
 
     init() {
@@ -32,6 +34,36 @@ final class SoundSynthesizer: @unchecked Sendable {
             fatalError("SoundSynthesizer: unable to create mono Float32 format at \(Self.sampleRate) Hz")
         }
         self.format = fmt
+
+        // Preload wax_slime.caf
+        if let url = Bundle.main.url(forResource: "wax_slime", withExtension: "caf") {
+            do {
+                let file = try AVAudioFile(forReading: url)
+                if let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)) {
+                    try file.read(into: buffer)
+                    if buffer.format == fmt {
+                        self.waxSlimeBuffer = buffer
+                    } else if let converter = AVAudioConverter(from: buffer.format, to: fmt),
+                              let newBuffer = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(Double(buffer.frameLength) * (fmt.sampleRate / buffer.format.sampleRate))) {
+                        var error: NSError?
+                        var hasData = true
+                        converter.convert(to: newBuffer, error: &error, withInputFrom: { inNumPackets, outStatus in
+                            if hasData {
+                                outStatus.pointee = .haveData
+                                hasData = false
+                                return buffer
+                            } else {
+                                outStatus.pointee = .endOfStream
+                                return nil
+                            }
+                        })
+                        self.waxSlimeBuffer = newBuffer
+                    }
+                }
+            } catch {
+                print("SoundSynthesizer: failed to load wax_slime.caf - \(error)")
+            }
+        }
     }
 
     // MARK: - Public API
@@ -49,6 +81,10 @@ final class SoundSynthesizer: @unchecked Sendable {
     ///     frequency by ±15 % so that different keys sound distinct.
     /// - Returns: A filled `AVAudioPCMBuffer`, or `nil` if allocation fails.
     func generateClickDown(profile: SoundProfile, pitchVariation: Float, isLargeKey: Bool = false) -> AVAudioPCMBuffer? {
+        if profile == .waxSlime, let buffer = waxSlimeBuffer {
+            return buffer
+        }
+
         let sampleRate = Float(Self.sampleRate)
         // Use the longer of click / thud durations, plus a small tail.
         let totalDuration = max(profile.clickDuration, profile.thudDuration) + 0.010

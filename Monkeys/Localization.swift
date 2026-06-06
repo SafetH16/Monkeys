@@ -380,6 +380,17 @@ final class L: @unchecked Sendable {
                 .zh: "🐒 猴子",
                 .ko: "🐒 원숭이",
             ],
+            "p_wax_slime": [
+                .en: "🕯️ Wax Slime",
+                .it: "🕯️ Wax Slime",
+                .es: "🕯️ Wax Slime",
+                .fr: "🕯️ Wax Slime",
+                .de: "🕯️ Wax Slime",
+                .pt: "🕯️ Wax Slime",
+                .ja: "🕯️ ワックススライム",
+                .zh: "🕯️ 蜡泥 ASMR",
+                .ko: "🕯️ 왁스 슬라임",
+            ],
 
             // MARK: - Banana Game strings
             "g_monkeys": [
