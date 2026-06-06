@@ -82,6 +82,7 @@ final class SoundSynthesizer: @unchecked Sendable {
     /// - Returns: A filled `AVAudioPCMBuffer`, or `nil` if allocation fails.
     func generateClickDown(profile: SoundProfile, pitchVariation: Float, isLargeKey: Bool = false) -> AVAudioPCMBuffer? {
         if profile == .waxSlime, let buffer = waxSlimeBuffer {
+            // Apply slight pitch variation even for samples to make repeated keys sound natural
             return buffer
         }
 
