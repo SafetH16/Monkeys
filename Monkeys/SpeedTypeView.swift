@@ -13,8 +13,18 @@ final class SpeedTypeView: NSView {
 
     enum GamePhase {
         case waiting    // Level selection screen
+        case countdown  // 3-2-1 pre-game countdown
         case playing    // Active typing
         case finished   // Results screen
+    }
+
+    struct Confetto {
+        var position: CGPoint
+        var velocity: CGVector
+        var color: NSColor
+        var size: CGFloat
+        var spin: CGFloat
+        var spinSpeed: CGFloat
     }
 
     enum DifficultyLevel: Int, CaseIterable {
@@ -72,6 +82,9 @@ final class SpeedTypeView: NSView {
     var onPlayFailSound: (() -> Void)?
     var onPlayComboSound: ((Int) -> Void)?
     var onPlayLevelUpSound: (() -> Void)?
+    var onPlayCountdownTick: (() -> Void)?
+    var onPlayCountdownGo: (() -> Void)?
+    var onPlayRecordSound: (() -> Void)?
 
     // MARK: - Word Banks (Beginner: single words)
 
@@ -380,6 +393,16 @@ final class SpeedTypeView: NSView {
     // Level selection hover
     private var hoveredLevel: Int = -1
 
+    // Pre-game countdown (3-2-1-GO)
+    private var countdownFrames: Int = 0
+
+    // WPM sampled once per second while playing, for the results chart
+    private var wpmHistory: [Int] = []
+
+    // New-record celebration
+    private var finishedAsRecord: Bool = false
+    private var confetti: [Confetto] = []
+
     // MARK: - Init
 
     override init(frame: NSRect) {
@@ -419,6 +442,10 @@ final class SpeedTypeView: NSView {
         monkeyEmoji = "🐵"
         monkeyReactionFrames = 0
         selectedLevelIndex = 0
+        countdownFrames = 0
+        wpmHistory = []
+        finishedAsRecord = false
+        confetti.removeAll()
         loadHighScore()
         pickNewText()
 
@@ -434,6 +461,13 @@ final class SpeedTypeView: NSView {
         highScoreWPM = UserDefaults.standard.integer(forKey: selectedLevel.highScoreKey)
     }
 
+    private func beginCountdown() {
+        phase = .countdown
+        countdownFrames = 180 // 3 seconds at 60 fps
+        onPlayCountdownTick?()
+        onStartMusic?()
+    }
+
     private func startPlaying() {
         phase = .playing
         gameDuration = selectedLevel.gameDuration
@@ -446,9 +480,11 @@ final class SpeedTypeView: NSView {
         wrongChars = 0
         combo = 0
         bestCombo = 0
+        wpmHistory = []
+        finishedAsRecord = false
+        confetti.removeAll()
         loadHighScore()
         pickNewText()
-        onStartMusic?()
     }
 
     private func pickNewText() {
@@ -486,12 +522,41 @@ final class SpeedTypeView: NSView {
             }
         }
 
+        // Countdown phase: tick every second, then GO
+        if phase == .countdown {
+            countdownFrames -= 1
+            if countdownFrames == 120 || countdownFrames == 60 {
+                onPlayCountdownTick?()
+            } else if countdownFrames <= 0 {
+                onPlayCountdownGo?()
+                startPlaying()
+            }
+        }
+
         if phase == .playing, let start = startTime {
             let elapsed = Date().timeIntervalSince(start)
             timeRemaining = max(0, gameDuration - elapsed)
+
+            // Sample live WPM once per second for the results chart
+            if frameCount % 60 == 0 {
+                wpmHistory.append(calculateWPM())
+            }
+
             if timeRemaining <= 0 {
                 endGame()
             }
+        }
+
+        // Confetti physics on the results screen
+        if phase == .finished && !confetti.isEmpty {
+            for i in 0..<confetti.count {
+                confetti[i].position.x += confetti[i].velocity.dx
+                confetti[i].position.y += confetti[i].velocity.dy
+                confetti[i].velocity.dy -= 0.06
+                confetti[i].velocity.dx *= 0.99
+                confetti[i].spin += confetti[i].spinSpeed
+            }
+            confetti.removeAll { $0.position.y < -20 }
         }
 
         setNeedsDisplay(bounds)
@@ -501,9 +566,35 @@ final class SpeedTypeView: NSView {
         phase = .finished
         onStopMusic?()
         let wpm = calculateWPM()
-        if wpm > highScoreWPM {
+        wpmHistory.append(wpm)
+        if wpm > highScoreWPM && wpm > 0 {
             highScoreWPM = wpm
             UserDefaults.standard.set(highScoreWPM, forKey: selectedLevel.highScoreKey)
+            finishedAsRecord = true
+            spawnConfetti()
+            onPlayRecordSound?()
+        }
+    }
+
+    private func spawnConfetti() {
+        let palette: [NSColor] = [
+            NSColor(red: 1.0, green: 0.85, blue: 0.2, alpha: 1.0),
+            NSColor(red: 0.4, green: 1.0, blue: 0.5, alpha: 1.0),
+            NSColor(red: 0.4, green: 0.7, blue: 1.0, alpha: 1.0),
+            NSColor(red: 1.0, green: 0.45, blue: 0.55, alpha: 1.0),
+            NSColor(red: 0.85, green: 0.55, blue: 1.0, alpha: 1.0),
+        ]
+        confetti = (0..<70).map { _ in
+            Confetto(
+                position: CGPoint(x: CGFloat.random(in: 0...bounds.width),
+                                  y: bounds.height + CGFloat.random(in: 0...120)),
+                velocity: CGVector(dx: CGFloat.random(in: -0.8...0.8),
+                                   dy: CGFloat.random(in: -2.2 ... -0.8)),
+                color: palette.randomElement()!,
+                size: CGFloat.random(in: 4...8),
+                spin: CGFloat.random(in: 0...(.pi * 2)),
+                spinSpeed: CGFloat.random(in: -0.15...0.15)
+            )
         }
     }
 
@@ -548,9 +639,13 @@ final class SpeedTypeView: NSView {
             }
             // Enter or Space to start
             if char == "\r" || char == " " || char == "\n" {
-                startPlaying()
+                beginCountdown()
                 return
             }
+            return
+        }
+
+        if phase == .countdown {
             return
         }
 
@@ -621,11 +716,43 @@ final class SpeedTypeView: NSView {
         switch phase {
         case .waiting:
             drawStartScreen(ctx: ctx, w: w, h: h)
+        case .countdown:
+            drawCountdownScreen(ctx: ctx, w: w, h: h)
         case .playing:
             drawGameScreen(ctx: ctx, w: w, h: h)
         case .finished:
             drawResultsScreen(ctx: ctx, w: w, h: h)
         }
+    }
+
+    // MARK: - Countdown Screen
+
+    private func drawCountdownScreen(ctx: CGContext, w: CGFloat, h: CGFloat) {
+        // Difficulty badge at top
+        let diffStr = "\(selectedLevel.emoji) \(L.shared.s(selectedLevel.locKey))"
+        drawCentered(diffStr, y: h - 90, size: 16, color: selectedLevel.color, in: w)
+
+        // "Get ready…"
+        drawCentered(L.shared.s("st_get_ready"), y: h / 2 + 80, size: 20, bold: true,
+                     color: NSColor(white: 0.9, alpha: 1.0), in: w)
+
+        // Big countdown number with a pop-in scale each second
+        let secondsLeft = (max(countdownFrames, 1) - 1) / 60 + 1
+        let frameInSecond = (max(countdownFrames, 1) - 1) % 60
+        let popScale = 1.0 + 0.5 * (CGFloat(frameInSecond) / 60.0)
+        let numberSize = 72.0 * popScale
+        let alpha = 0.4 + 0.6 * (CGFloat(frameInSecond) / 60.0)
+
+        let numberStr = "\(secondsLeft)" as NSString
+        let numberAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: numberSize),
+            .foregroundColor: selectedLevel.color.withAlphaComponent(alpha),
+        ]
+        let ns = numberStr.size(withAttributes: numberAttrs)
+        numberStr.draw(at: NSPoint(x: w / 2 - ns.width / 2, y: h / 2 - ns.height / 2), withAttributes: numberAttrs)
+
+        // Monkey warming up its paws
+        drawCentered("🐵⌨️", y: h / 2 - 120, size: 34, color: .white, in: w)
     }
 
     // MARK: - Background
@@ -946,6 +1073,18 @@ final class SpeedTypeView: NSView {
                 yPos -= lineHeight
             }
 
+            // Blinking block highlight behind the character to type next
+            if i == typedChars.count, let ctx = NSGraphicsContext.current?.cgContext {
+                let blink = 0.25 + 0.15 * sin(CGFloat(frameCount) * 0.12)
+                ctx.setFillColor(NSColor(red: 1.0, green: 0.95, blue: 0.5, alpha: blink).cgColor)
+                let cursorRect = CGRect(x: xOffset - 1, y: yPos - 2,
+                                        width: max(charSize.width, fontSize * 0.55) + 2,
+                                        height: charSize.height + 2)
+                let cursorPath = CGPath(roundedRect: cursorRect, cornerWidth: 3, cornerHeight: 3, transform: nil)
+                ctx.addPath(cursorPath)
+                ctx.fillPath()
+            }
+
             charStr.draw(at: NSPoint(x: xOffset, y: yPos), withAttributes: attrs)
             xOffset += charSize.width
         }
@@ -999,6 +1138,9 @@ final class SpeedTypeView: NSView {
         drawCentered(L.shared.sf("g_best_score", highScoreWPM), y: h / 2 - 70, size: 14,
                      color: NSColor(red: 1.0, green: 0.85, blue: 0.3, alpha: 0.8), in: w)
 
+        // WPM-over-time chart
+        drawWPMChart(ctx: ctx, w: w, h: h)
+
         // Performance message
         let msg: String
         if wpm >= 80 { msg = L.shared.s("st_living_typewriter") }
@@ -1007,13 +1149,71 @@ final class SpeedTypeView: NSView {
         else if wpm >= 20 { msg = L.shared.s("st_good_start") }
         else { msg = L.shared.s("st_keep_trying") }
 
-        drawCentered(msg, y: h / 2 - 105, size: 14,
+        drawCentered(msg, y: h / 2 - 150, size: 14,
                      color: NSColor(white: 0.8, alpha: 0.9), in: w)
 
         // Restart hint
         let pulse = 0.5 + 0.5 * sin(CGFloat(frameCount) * 0.06)
-        drawCentered(L.shared.s("g_press_restart"), y: h / 2 - 145, size: 14,
+        drawCentered(L.shared.s("g_press_restart"), y: h / 2 - 180, size: 14,
                      color: NSColor(white: 1.0, alpha: pulse), in: w)
+
+        // Confetti on a new record — drawn on top of everything
+        drawConfetti(ctx: ctx)
+    }
+
+    /// Draws a small line chart of the WPM sampled each second of the run.
+    private func drawWPMChart(ctx: CGContext, w: CGFloat, h: CGFloat) {
+        guard wpmHistory.count >= 3 else { return }
+
+        let chartW: CGFloat = 220
+        let chartH: CGFloat = 34
+        let originX = w / 2 - chartW / 2
+        let originY = h / 2 - 125
+
+        // Panel
+        ctx.setFillColor(NSColor(white: 0.0, alpha: 0.35).cgColor)
+        let panel = CGPath(roundedRect: CGRect(x: originX - 8, y: originY - 6, width: chartW + 16, height: chartH + 12),
+                           cornerWidth: 8, cornerHeight: 8, transform: nil)
+        ctx.addPath(panel)
+        ctx.fillPath()
+
+        let maxWPM = max(wpmHistory.max() ?? 1, 1)
+        let stepX = chartW / CGFloat(wpmHistory.count - 1)
+
+        // Line
+        ctx.setStrokeColor(NSColor(red: 0.4, green: 1.0, blue: 0.5, alpha: 0.9).cgColor)
+        ctx.setLineWidth(2.0)
+        ctx.setLineJoin(.round)
+        ctx.beginPath()
+        for (i, wpmValue) in wpmHistory.enumerated() {
+            let x = originX + CGFloat(i) * stepX
+            let y = originY + chartH * CGFloat(wpmValue) / CGFloat(maxWPM)
+            if i == 0 {
+                ctx.move(to: CGPoint(x: x, y: y))
+            } else {
+                ctx.addLine(to: CGPoint(x: x, y: y))
+            }
+        }
+        ctx.strokePath()
+
+        // End dot
+        if let last = wpmHistory.last {
+            let x = originX + CGFloat(wpmHistory.count - 1) * stepX
+            let y = originY + chartH * CGFloat(last) / CGFloat(maxWPM)
+            ctx.setFillColor(NSColor(red: 0.4, green: 1.0, blue: 0.5, alpha: 1.0).cgColor)
+            ctx.fillEllipse(in: CGRect(x: x - 3, y: y - 3, width: 6, height: 6))
+        }
+    }
+
+    private func drawConfetti(ctx: CGContext) {
+        for piece in confetti {
+            ctx.saveGState()
+            ctx.translateBy(x: piece.position.x, y: piece.position.y)
+            ctx.rotate(by: piece.spin)
+            ctx.setFillColor(piece.color.cgColor)
+            ctx.fill(CGRect(x: -piece.size / 2, y: -piece.size / 4, width: piece.size, height: piece.size / 2))
+            ctx.restoreGState()
+        }
     }
 
     // MARK: - Helpers

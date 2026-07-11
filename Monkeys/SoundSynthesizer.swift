@@ -324,6 +324,127 @@ final class SoundSynthesizer: @unchecked Sendable {
         return buffer
     }
 
+    /// Synthesises a sparkling ascending glissando for golden banana catches.
+    func generateGoldenChime() -> AVAudioPCMBuffer? {
+        let sampleRate = Float(Self.sampleRate)
+        let duration: Float = 0.55
+        let frameCount = AVAudioFrameCount(duration * sampleRate)
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            return nil
+        }
+        buffer.frameLength = frameCount
+        guard let samples = buffer.floatChannelData?[0] else { return nil }
+
+        // Fast harp-like gliss: C6 E6 G6 C7 with shimmering overtones
+        let notes: [Float] = [1046.50, 1318.51, 1567.98, 2093.00]
+        let noteSpacing: Float = 0.07
+
+        for i in 0 ..< Int(frameCount) {
+            let t = Float(i) / sampleRate
+            var sample: Float = 0.0
+            for (n, freq) in notes.enumerated() {
+                let noteT = t - Float(n) * noteSpacing
+                if noteT >= 0 {
+                    let env = 0.16 * expf(-noteT / 0.12)
+                    // Bell timbre: fundamental + soft 3rd harmonic with slow tremolo
+                    let tremolo = 1.0 + 0.15 * sinf(Self.twoPi * 9.0 * noteT)
+                    sample += (sinf(Self.twoPi * freq * noteT)
+                               + 0.25 * sinf(Self.twoPi * freq * 3.0 * noteT)) * env * tremolo
+                }
+            }
+            samples[i] = sample
+        }
+        return buffer
+    }
+
+    /// Synthesises a short melancholic descending jingle for game over.
+    func generateGameOverJingle() -> AVAudioPCMBuffer? {
+        let sampleRate = Float(Self.sampleRate)
+        let duration: Float = 1.1
+        let frameCount = AVAudioFrameCount(duration * sampleRate)
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            return nil
+        }
+        buffer.frameLength = frameCount
+        guard let samples = buffer.floatChannelData?[0] else { return nil }
+
+        // Descending minor line: E5 → C5 → A4 → E4, last note held
+        let melody: [(freq: Float, start: Float, dur: Float)] = [
+            (659.25, 0.00, 0.18),
+            (523.25, 0.20, 0.18),
+            (440.00, 0.40, 0.18),
+            (329.63, 0.60, 0.50),
+        ]
+
+        for i in 0 ..< Int(frameCount) {
+            let t = Float(i) / sampleRate
+            var sample: Float = 0.0
+            for note in melody {
+                let noteT = t - note.start
+                if noteT >= 0 && noteT < note.dur + 0.15 {
+                    let attack = min(noteT / 0.015, 1.0)
+                    let env = 0.20 * attack * expf(-noteT / (note.dur * 0.6))
+                    // Warm timbre: fundamental + octave-down shadow
+                    sample += (sinf(Self.twoPi * note.freq * noteT)
+                               + 0.3 * sinf(Self.twoPi * note.freq * 0.5 * noteT)) * env
+                }
+            }
+            samples[i] = sample
+        }
+        return buffer
+    }
+
+    /// Synthesises a short percussive tick for pre-game countdowns.
+    func generateCountdownTick() -> AVAudioPCMBuffer? {
+        let sampleRate = Float(Self.sampleRate)
+        let duration: Float = 0.12
+        let frameCount = AVAudioFrameCount(duration * sampleRate)
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            return nil
+        }
+        buffer.frameLength = frameCount
+        guard let samples = buffer.floatChannelData?[0] else { return nil }
+
+        for i in 0 ..< Int(frameCount) {
+            let t = Float(i) / sampleRate
+            let env = 0.28 * expf(-t / 0.025)
+            // Wood-block: mid sine + tight noise transient
+            var sample = sinf(Self.twoPi * 880.0 * t) * env
+            if t < 0.004 {
+                sample += Float.random(in: -1.0 ... 1.0) * 0.15 * (1.0 - t / 0.004)
+            }
+            samples[i] = sample
+        }
+        return buffer
+    }
+
+    /// Synthesises a bright rising "GO!" chime that ends a countdown.
+    func generateCountdownGo() -> AVAudioPCMBuffer? {
+        let sampleRate = Float(Self.sampleRate)
+        let duration: Float = 0.35
+        let frameCount = AVAudioFrameCount(duration * sampleRate)
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            return nil
+        }
+        buffer.frameLength = frameCount
+        guard let samples = buffer.floatChannelData?[0] else { return nil }
+
+        for i in 0 ..< Int(frameCount) {
+            let t = Float(i) / sampleRate
+            let attack = min(t / 0.01, 1.0)
+            let env = 0.22 * attack * expf(-t / 0.15)
+            // Octave power chord: A5 + A6 with a quick upward sweep
+            let sweep = 1.0 + 0.06 * min(t / 0.05, 1.0)
+            samples[i] = (sinf(Self.twoPi * 880.0 * sweep * t)
+                          + 0.5 * sinf(Self.twoPi * 1760.0 * sweep * t)) * env
+        }
+        return buffer
+    }
+
     /// Synthesises a quick, descending pitch slide for missed keystrokes or errors.
     func generateFailChime() -> AVAudioPCMBuffer? {
         let sampleRate = Float(Self.sampleRate)

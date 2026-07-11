@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statsMenuItem: NSMenuItem!
     private var autoMuteMenuItem: NSMenuItem!
     private var peakWpmMenuItem: NSMenuItem!
+    private var musicMenuItem: NSMenuItem!
 
     private let allProfiles: [SoundProfile] = [
         .blue, .brown, .red, .black, .silentRed, .speedSilver,
@@ -213,7 +214,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        // 4. Volume (compact, no label)
+        // 4. Volume (compact, no label) — restored from last session
+        let savedVolume = UserDefaults.standard.object(forKey: "MonkeysVolume") as? Int ?? 70
         let sliderView = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
         let volIcon = NSTextField(labelWithString: "🔊")
         volIcon.frame = NSRect(x: 4, y: 2, width: 20, height: 20)
@@ -222,14 +224,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         volumeSlider = NSSlider(frame: NSRect(x: 26, y: 2, width: 164, height: 20))
         volumeSlider.minValue = 0
         volumeSlider.maxValue = 100
-        volumeSlider.integerValue = 70
+        volumeSlider.integerValue = savedVolume
         volumeSlider.target = self
         volumeSlider.action = #selector(volumeChanged(_:))
         sliderView.addSubview(volumeSlider)
         let sliderMenuItem = NSMenuItem()
         sliderMenuItem.view = sliderView
         menu.addItem(sliderMenuItem)
-        soundEngine.setVolume(Float(volumeSlider.integerValue) / 100.0)
+        soundEngine.setVolume(Float(savedVolume) / 100.0)
+
+        // 4b. Game music toggle
+        let musicEnabled = UserDefaults.standard.object(forKey: "MonkeysMusicEnabled") as? Bool ?? true
+        soundEngine.setMusicEnabled(musicEnabled)
+        musicMenuItem = NSMenuItem(
+            title: musicEnabled ? L.shared.s("music_on") : L.shared.s("music_off"),
+            action: #selector(toggleMusic), keyEquivalent: ""
+        )
+        musicMenuItem.target = self
+        menu.addItem(musicMenuItem)
 
         // 5. Profile submenu
         let profileItem = NSMenuItem(title: L.shared.s("sound_profile"), action: nil, keyEquivalent: "")
@@ -341,6 +353,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func volumeChanged(_ sender: NSSlider) {
         let volume = Float(sender.integerValue) / 100.0
         soundEngine.setVolume(volume)
+        UserDefaults.standard.set(sender.integerValue, forKey: "MonkeysVolume")
+    }
+
+    @objc private func toggleMusic() {
+        let enabled = !(UserDefaults.standard.object(forKey: "MonkeysMusicEnabled") as? Bool ?? true)
+        UserDefaults.standard.set(enabled, forKey: "MonkeysMusicEnabled")
+        soundEngine.setMusicEnabled(enabled)
+        musicMenuItem.title = enabled ? L.shared.s("music_on") : L.shared.s("music_off")
     }
 
     @objc private func selectProfile(_ sender: NSMenuItem) {
@@ -351,6 +371,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let profile = allProfiles[idx]
         soundEngine.setProfile(profile)
         UserDefaults.standard.set(profile.rawValue, forKey: "MonkeysSoundProfile")
+        // Audition the new profile right away
+        soundEngine.playPreviewClick(profile)
     }
 
     @objc private func changeLanguage(_ sender: NSMenuItem) {
@@ -365,10 +387,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showInfo() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         let alert = NSAlert()
         alert.messageText = "🐒 Monkeys"
         alert.informativeText = """
-            🐒 Monkeys v4.0
+            🐒 Monkeys v\(version)
 
             \(L.shared.s("p_tactile_click")) · \(L.shared.s("p_soft_tactile"))
             \(L.shared.s("p_light_linear")) · \(L.shared.s("p_heavy_linear"))
@@ -420,6 +443,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             gameWindow?.gameView.onPlayLevelUpSound = { [weak self] in
                 self?.soundEngine.playLevelUp()
             }
+            gameWindow?.gameView.onPlayGoldenSound = { [weak self] in
+                self?.soundEngine.playGolden()
+            }
+            gameWindow?.gameView.onPlayGameOverSound = { [weak self] in
+                self?.soundEngine.playGameOver()
+            }
             gameWindow?.gameView.onGameOver = { [weak self] in
                 self?.soundEngine.stopMusic()
             }
@@ -428,6 +457,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             gameWindow?.gameView.onStopMusic = { [weak self] in
                 self?.soundEngine.stopMusic()
+            }
+            gameWindow?.gameView.onPauseMusic = { [weak self] in
+                self?.soundEngine.pauseMusic()
+            }
+            gameWindow?.gameView.onResumeMusic = { [weak self] in
+                self?.soundEngine.resumeMusic()
             }
         }
 
@@ -451,6 +486,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             speedTypeWindow?.speedTypeView.onPlayLevelUpSound = { [weak self] in
                 self?.soundEngine.playLevelUp()
+            }
+            speedTypeWindow?.speedTypeView.onPlayCountdownTick = { [weak self] in
+                self?.soundEngine.playCountdownTick()
+            }
+            speedTypeWindow?.speedTypeView.onPlayCountdownGo = { [weak self] in
+                self?.soundEngine.playCountdownGo()
+            }
+            speedTypeWindow?.speedTypeView.onPlayRecordSound = { [weak self] in
+                self?.soundEngine.playGolden()
             }
             speedTypeWindow?.speedTypeView.onStartMusic = { [weak self] in
                 self?.soundEngine.startMusic()

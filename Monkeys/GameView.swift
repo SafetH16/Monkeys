@@ -11,11 +11,35 @@ final class GameView: NSView {
 
     // MARK: - Types
 
+    enum BananaKind {
+        case normal   // 🍌 regular banana
+        case golden   // ⭐ bonus: extra points + heals one life
+        case bomb     // 💣 trap: typing it costs a life
+    }
+
     struct GameBanana {
         let character: Character
         var position: CGPoint
         var speed: CGFloat
+        let kind: BananaKind
+        var wobblePhase: CGFloat
         let size: CGFloat = 40.0
+    }
+
+    struct Particle {
+        var position: CGPoint
+        var velocity: CGVector
+        var life: Int
+        let totalLife: Int
+        var size: CGFloat
+        var color: NSColor
+    }
+
+    struct Bird {
+        var x: CGFloat
+        var y: CGFloat
+        var speed: CGFloat
+        var wingPhase: CGFloat
     }
 
     struct Star {
@@ -63,9 +87,13 @@ final class GameView: NSView {
     var onPlayFailSound: (() -> Void)?
     var onPlayComboSound: ((Int) -> Void)?
     var onPlayLevelUpSound: (() -> Void)?
+    var onPlayGoldenSound: (() -> Void)?
+    var onPlayGameOverSound: (() -> Void)?
     var onGameOver: (() -> Void)?
     var onStartMusic: (() -> Void)?
     var onStopMusic: (() -> Void)?
+    var onPauseMusic: (() -> Void)?
+    var onResumeMusic: (() -> Void)?
 
 
     // MARK: - Game State
@@ -77,6 +105,15 @@ final class GameView: NSView {
     private var comboCount = 0
     private var isGameOver = false
     private var isWaitingToStart = true
+    private var isPaused = false
+
+    // Visual feedback
+    private var particles: [Particle] = []
+    private var birds: [Bird] = []
+    private var shakeFrames: Int = 0
+    private var bannerText: String = ""
+    private var bannerFrames: Int = 0
+    private let bannerTotalFrames: Int = 90
 
     // Monkey
     private var monkeyX: CGFloat = 210.0
@@ -116,6 +153,7 @@ final class GameView: NSView {
         generateStars()
         generatePalmTrees()
         generateClouds()
+        generateBirds()
     }
 
     required init?(coder: NSCoder) {
@@ -123,6 +161,7 @@ final class GameView: NSView {
         generateStars()
         generatePalmTrees()
         generateClouds()
+        generateBirds()
     }
 
     // MARK: - Stars, Trees, Clouds Setup
@@ -157,11 +196,38 @@ final class GameView: NSView {
         ]
     }
 
+    private func generateBirds() {
+        birds = [
+            Bird(x: -30, y: 460, speed: 0.8, wingPhase: 0),
+            Bird(x: -120, y: 505, speed: 0.65, wingPhase: 1.7),
+            Bird(x: -220, y: 435, speed: 0.95, wingPhase: 3.1),
+        ]
+    }
+
+    private func spawnParticles(at point: CGPoint, count: Int, colors: [NSColor]) {
+        for _ in 0..<count {
+            let angle = CGFloat.random(in: 0...(2 * .pi))
+            let speed = CGFloat.random(in: 1.0...4.0)
+            particles.append(Particle(
+                position: point,
+                velocity: CGVector(dx: cos(angle) * speed, dy: sin(angle) * speed + 1.5),
+                life: Int.random(in: 25...45),
+                totalLife: 45,
+                size: CGFloat.random(in: 2.5...5.5),
+                color: colors.randomElement()!
+            ))
+        }
+    }
+
     // MARK: - Game Loop
 
     func resetGame() {
         bananas.removeAll()
         scorePopups.removeAll()
+        particles.removeAll()
+        shakeFrames = 0
+        bannerFrames = 0
+        isPaused = false
         score = 0
         lives = 5
         level = 1
@@ -197,6 +263,11 @@ final class GameView: NSView {
             setNeedsDisplay(bounds)
             return
         }
+        if isPaused {
+            frameCount += 1
+            setNeedsDisplay(bounds)
+            return
+        }
 
         frameCount += 1
         gameElapsedSeconds += 1.0 / 60.0
@@ -227,25 +298,62 @@ final class GameView: NSView {
             lastSpawnTime = now
         }
 
-        // Move bananas
-        let effectiveSpeed: CGFloat = 1.2 + CGFloat(level - 1) * 0.15
+        // Move bananas (each carries its own speed, with gentle horizontal wobble)
         for i in 0..<bananas.count {
-            bananas[i].position.y -= bananas[i].speed * effectiveSpeed / bananas[i].speed
+            bananas[i].position.y -= bananas[i].speed
+            bananas[i].wobblePhase += 0.05
+            bananas[i].position.x += sin(bananas[i].wobblePhase) * 0.4
         }
 
-        // Remove fallen bananas
+        // Remove fallen bananas — a missed bomb is harmless, a missed banana costs a life
         let groundY: CGFloat = 70.0
         let fallen = bananas.filter { $0.position.y < groundY }
         bananas.removeAll { $0.position.y < groundY }
-        for _ in fallen {
+        for banana in fallen {
+            if banana.kind == .bomb {
+                // Bomb hits the ground and fizzles out — dust puff, no damage
+                spawnParticles(at: CGPoint(x: banana.position.x, y: groundY),
+                               count: 8,
+                               colors: [NSColor(white: 0.5, alpha: 0.8), NSColor(white: 0.35, alpha: 0.8)])
+                continue
+            }
             lives -= 1
             comboCount = 0
+            shakeFrames = 12
+            spawnParticles(at: CGPoint(x: banana.position.x, y: groundY),
+                           count: 10,
+                           colors: [NSColor(red: 1.0, green: 0.85, blue: 0.2, alpha: 1.0),
+                                    NSColor(red: 0.85, green: 0.65, blue: 0.1, alpha: 1.0)])
             onPlayFailSound?()
             if lives <= 0 {
                 endGame()
                 return
             }
         }
+
+        // Update particles (simple gravity)
+        particles = particles.compactMap { p in
+            var particle = p
+            particle.position.x += particle.velocity.dx
+            particle.position.y += particle.velocity.dy
+            particle.velocity.dy -= 0.15
+            particle.life -= 1
+            return particle.life > 0 ? particle : nil
+        }
+
+        // Update birds (fly across during the day)
+        for i in 0..<birds.count {
+            birds[i].x += birds[i].speed
+            birds[i].wingPhase += 0.15
+            if birds[i].x > bounds.width + 40 {
+                birds[i].x = -CGFloat.random(in: 40...200)
+                birds[i].y = CGFloat.random(in: 420...530)
+            }
+        }
+
+        // Decay screen shake and level banner
+        if shakeFrames > 0 { shakeFrames -= 1 }
+        if bannerFrames > 0 { bannerFrames -= 1 }
 
         // Move monkey smoothly
         let dx = monkeyTargetX - monkeyX
@@ -275,13 +383,32 @@ final class GameView: NSView {
     }
 
     private func spawnBanana() {
-        let char = availableLetters.randomElement()!
+        // Never spawn a letter that is already falling: with bombs in play,
+        // duplicated letters would make hits ambiguous.
+        let usedLetters = Set(bananas.map { $0.character })
+        let freeLetters = availableLetters.filter { !usedLetters.contains($0) }
+        guard let char = freeLetters.randomElement() else { return }
+
+        let kind: BananaKind
+        let roll = Double.random(in: 0...1)
+        if level >= 2 && roll < 0.08 {
+            kind = .golden
+        } else if level >= 3 && roll > 0.88 {
+            kind = .bomb
+        } else {
+            kind = .normal
+        }
+
         let x = CGFloat.random(in: 30...(bounds.width - 30))
-        let baseSpeed: CGFloat = 1.2 + CGFloat(level - 1) * 0.15
+        var speed = (1.2 + CGFloat(level - 1) * 0.15) * CGFloat.random(in: 0.85...1.15)
+        if kind == .golden { speed *= 1.35 } // golden bananas are faster — worth the chase
+
         let banana = GameBanana(
             character: char,
             position: CGPoint(x: x, y: bounds.height - 20),
-            speed: baseSpeed
+            speed: speed,
+            kind: kind,
+            wobblePhase: CGFloat.random(in: 0...(.pi * 2))
         )
         bananas.append(banana)
     }
@@ -289,6 +416,7 @@ final class GameView: NSView {
     private func endGame() {
         isGameOver = true
         onStopMusic?()
+        onPlayGameOverSound?()
         onGameOver?()
         if score > highScore {
             highScore = score
@@ -309,18 +437,65 @@ final class GameView: NSView {
             return
         }
 
+        // ESC toggles pause during play
+        if char == "\u{1B}" {
+            isPaused.toggle()
+            if isPaused {
+                onPauseMusic?()
+            } else {
+                onResumeMusic?()
+            }
+            return
+        }
+        guard !isPaused else { return }
+
         let upper = Character(String(char).uppercased())
         if let idx = bananas.firstIndex(where: { $0.character == upper }) {
-            let pos = bananas[idx].position
+            let banana = bananas[idx]
+            let pos = banana.position
             bananas.remove(at: idx)
-            comboCount += 1
 
+            // Typing a bomb's letter detonates it!
+            if banana.kind == .bomb {
+                lives -= 1
+                comboCount = 0
+                shakeFrames = 18
+                spawnParticles(at: pos, count: 22,
+                               colors: [NSColor(red: 1.0, green: 0.45, blue: 0.1, alpha: 1.0),
+                                        NSColor(red: 1.0, green: 0.2, blue: 0.1, alpha: 1.0),
+                                        NSColor(white: 0.4, alpha: 0.9)])
+                scorePopups.append(ScorePopup(position: pos, text: "💥", framesRemaining: 40, totalFrames: 40))
+                onPlayFailSound?()
+                if lives <= 0 {
+                    endGame()
+                }
+                return
+            }
+
+            comboCount += 1
             let multiplier = min(comboCount >= 3 ? comboCount - 1 : 1, 5)
-            let points = multiplier
+
+            let points: Int
+            let popupText: String
+            if banana.kind == .golden {
+                points = 5 * max(1, multiplier)
+                popupText = "+\(points) ⭐"
+                if lives < 5 { lives += 1 } // golden banana heals one life
+                spawnParticles(at: pos, count: 24,
+                               colors: [NSColor(red: 1.0, green: 0.9, blue: 0.3, alpha: 1.0),
+                                        NSColor(red: 1.0, green: 0.75, blue: 0.1, alpha: 1.0),
+                                        NSColor.white])
+                onPlayGoldenSound?()
+            } else {
+                points = multiplier
+                popupText = multiplier > 1 ? "+\(points) 🔥" : "+1"
+                spawnParticles(at: pos, count: 12,
+                               colors: [NSColor(red: 1.0, green: 0.9, blue: 0.3, alpha: 1.0),
+                                        NSColor(red: 0.95, green: 0.75, blue: 0.15, alpha: 1.0)])
+            }
             score += points
 
             // Score popup
-            let popupText = multiplier > 1 ? "+\(points) 🔥" : "+1"
             scorePopups.append(ScorePopup(position: pos, text: popupText, framesRemaining: 40, totalFrames: 40))
 
             // Move monkey toward banana
@@ -331,14 +506,18 @@ final class GameView: NSView {
             let newLevel = (score / 10) + 1
             if newLevel > level {
                 level = newLevel
+                bannerText = L.shared.sf("g_level_up", level)
+                bannerFrames = bannerTotalFrames
                 onPlayLevelUpSound?()
             }
 
-            // Combo sound
-            if comboCount >= 3 {
-                onPlayComboSound?(comboCount)
-            } else {
-                onPlaySuccessSound?()
+            // Combo sound (golden already played its own chime)
+            if banana.kind != .golden {
+                if comboCount >= 3 {
+                    onPlayComboSound?(comboCount)
+                } else {
+                    onPlaySuccessSound?()
+                }
             }
         } else {
             comboCount = 0
@@ -353,6 +532,14 @@ final class GameView: NSView {
         let w = bounds.width
         let h = bounds.height
 
+        // Screen shake: jitter the whole scene while shakeFrames > 0
+        let isShaking = shakeFrames > 0 && !isGameOver && !isWaitingToStart && !isPaused
+        if isShaking {
+            let mag = CGFloat(shakeFrames) * 0.5
+            ctx.saveGState()
+            ctx.translateBy(x: CGFloat.random(in: -mag...mag), y: CGFloat.random(in: -mag...mag))
+        }
+
         // Draw sky gradient based on time of day
         drawSkyGradient(ctx: ctx, w: w, h: h)
 
@@ -364,6 +551,9 @@ final class GameView: NSView {
         // Draw clouds
         drawClouds(ctx: ctx)
 
+        // Draw birds (daytime ambience)
+        drawBirds(ctx: ctx)
+
         // Draw sun/moon
         drawCelestialBody(ctx: ctx, w: w, h: h)
 
@@ -374,11 +564,13 @@ final class GameView: NSView {
         drawGround(ctx: ctx, w: w)
 
         if isWaitingToStart {
+            if isShaking { ctx.restoreGState() }
             drawStartScreen(ctx: ctx, w: w, h: h)
             return
         }
 
         if isGameOver {
+            if isShaking { ctx.restoreGState() }
             drawGameOverScreen(ctx: ctx, w: w, h: h)
             return
         }
@@ -389,11 +581,26 @@ final class GameView: NSView {
         // Draw monkey
         drawMonkey(ctx: ctx, w: w)
 
+        // Draw particles
+        drawParticles(ctx: ctx)
+
         // Draw score popups
         drawScorePopups(ctx: ctx)
 
+        if isShaking { ctx.restoreGState() }
+
         // Draw HUD
         drawHUD(ctx: ctx, w: w, h: h)
+
+        // Level-up banner
+        if bannerFrames > 0 {
+            drawLevelBanner(ctx: ctx, w: w, h: h)
+        }
+
+        // Pause overlay
+        if isPaused {
+            drawPauseOverlay(ctx: ctx, w: w, h: h)
+        }
     }
 
     // MARK: - Sky & Environment
@@ -643,32 +850,66 @@ final class GameView: NSView {
             let x = banana.position.x
             let y = banana.position.y
 
-            // Glow circle behind banana
+            // Glow circle behind banana (kind-specific)
             let glowColor: NSColor
-            switch timeOfDay {
-            case .morning, .afternoon:
-                glowColor = NSColor(red: 1.0, green: 0.9, blue: 0.3, alpha: 0.25)
-            case .evening:
-                glowColor = NSColor(red: 1.0, green: 0.7, blue: 0.2, alpha: 0.3)
-            case .night:
-                glowColor = NSColor(red: 1.0, green: 0.85, blue: 0.3, alpha: 0.4)
+            switch banana.kind {
+            case .golden:
+                // Pulsing golden halo
+                let pulse = 0.35 + 0.2 * sin(CGFloat(frameCount) * 0.15 + banana.wobblePhase)
+                glowColor = NSColor(red: 1.0, green: 0.85, blue: 0.1, alpha: pulse)
+                ctx.setFillColor(glowColor.cgColor)
+                ctx.fillEllipse(in: CGRect(x: x - 24, y: y - 24, width: 48, height: 48))
+            case .bomb:
+                // Menacing red halo
+                let pulse = 0.25 + 0.15 * sin(CGFloat(frameCount) * 0.2)
+                glowColor = NSColor(red: 1.0, green: 0.2, blue: 0.1, alpha: pulse)
+                ctx.setFillColor(glowColor.cgColor)
+                ctx.fillEllipse(in: CGRect(x: x - 20, y: y - 20, width: 40, height: 40))
+            case .normal:
+                switch timeOfDay {
+                case .morning, .afternoon:
+                    glowColor = NSColor(red: 1.0, green: 0.9, blue: 0.3, alpha: 0.25)
+                case .evening:
+                    glowColor = NSColor(red: 1.0, green: 0.7, blue: 0.2, alpha: 0.3)
+                case .night:
+                    glowColor = NSColor(red: 1.0, green: 0.85, blue: 0.3, alpha: 0.4)
+                }
+                ctx.setFillColor(glowColor.cgColor)
+                ctx.fillEllipse(in: CGRect(x: x - 18, y: y - 18, width: 36, height: 36))
             }
-            ctx.setFillColor(glowColor.cgColor)
-            ctx.fillEllipse(in: CGRect(x: x - 18, y: y - 18, width: 36, height: 36))
 
-            // Banana emoji
-            let bananaStr = "🍌" as NSString
+            // Falling item emoji
+            let emoji: String
+            switch banana.kind {
+            case .normal: emoji = "🍌"
+            case .golden: emoji = "🌟"
+            case .bomb:   emoji = "💣"
+            }
+            let bananaStr = emoji as NSString
             let bananaAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 26)]
             bananaStr.draw(at: NSPoint(x: x - 14, y: y - 14), withAttributes: bananaAttrs)
 
             // Letter badge
             let letterStr = String(banana.character) as NSString
+            let badgeColor: NSColor
+            let letterColor: NSColor
+            switch banana.kind {
+            case .golden:
+                badgeColor = NSColor(red: 0.55, green: 0.42, blue: 0.05, alpha: 0.9)
+                letterColor = NSColor(red: 1.0, green: 0.95, blue: 0.6, alpha: 1.0)
+            case .bomb:
+                badgeColor = NSColor(red: 0.45, green: 0.08, blue: 0.05, alpha: 0.9)
+                letterColor = NSColor(red: 1.0, green: 0.75, blue: 0.7, alpha: 1.0)
+            case .normal:
+                badgeColor = NSColor(red: 0.2, green: 0.2, blue: 0.2, alpha: 0.85)
+                letterColor = .white
+            }
             let letterAttrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.boldSystemFont(ofSize: 16),
-                .foregroundColor: NSColor.white,
+                .foregroundColor: letterColor,
             ]
             let letterSize = letterStr.size(withAttributes: letterAttrs)
-            ctx.setFillColor(NSColor(red: 0.2, green: 0.2, blue: 0.2, alpha: 0.85).cgColor)
+            ctx.setFillColor(badgeColor.cgColor)
             ctx.fillEllipse(in: CGRect(
                 x: x - letterSize.width / 2 - 4,
                 y: y - 28,
@@ -677,6 +918,86 @@ final class GameView: NSView {
             ))
             letterStr.draw(at: NSPoint(x: x - letterSize.width / 2, y: y - 26), withAttributes: letterAttrs)
         }
+    }
+
+    private func drawParticles(ctx: CGContext) {
+        for particle in particles {
+            let alpha = CGFloat(particle.life) / CGFloat(particle.totalLife)
+            ctx.setFillColor(particle.color.withAlphaComponent(alpha).cgColor)
+            ctx.fillEllipse(in: CGRect(
+                x: particle.position.x - particle.size / 2,
+                y: particle.position.y - particle.size / 2,
+                width: particle.size,
+                height: particle.size
+            ))
+        }
+    }
+
+    private func drawBirds(ctx: CGContext) {
+        // Birds only fly during daylight, and not on menu screens
+        guard !isWaitingToStart && !isGameOver else { return }
+        guard timeOfDay == .morning || timeOfDay == .afternoon else { return }
+
+        let birdColor: NSColor = timeOfDay == .morning ?
+            NSColor(white: 0.25, alpha: 0.7) : NSColor(white: 0.2, alpha: 0.8)
+        ctx.setStrokeColor(birdColor.cgColor)
+        ctx.setLineWidth(1.8)
+        ctx.setLineCap(.round)
+
+        for bird in birds {
+            let flap = sin(bird.wingPhase) * 4.0
+            // Two arcs forming a "V" seagull silhouette with flapping wings
+            ctx.beginPath()
+            ctx.move(to: CGPoint(x: bird.x - 7, y: bird.y + flap))
+            ctx.addQuadCurve(to: CGPoint(x: bird.x, y: bird.y),
+                             control: CGPoint(x: bird.x - 3.5, y: bird.y + 3 + flap))
+            ctx.addQuadCurve(to: CGPoint(x: bird.x + 7, y: bird.y + flap),
+                             control: CGPoint(x: bird.x + 3.5, y: bird.y + 3 + flap))
+            ctx.strokePath()
+        }
+    }
+
+    private func drawLevelBanner(ctx: CGContext, w: CGFloat, h: CGFloat) {
+        let progress = CGFloat(bannerFrames) / CGFloat(bannerTotalFrames)
+        // Fade in fast at the start, fade out toward the end
+        let alpha: CGFloat = progress > 0.85 ? (1.0 - progress) / 0.15 : min(1.0, progress / 0.3)
+
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 30),
+            .foregroundColor: NSColor(red: 0.5, green: 1.0, blue: 0.5, alpha: alpha),
+            .strokeColor: NSColor(red: 0.0, green: 0.3, blue: 0.0, alpha: alpha),
+            .strokeWidth: -3.0,
+        ]
+        let str = bannerText as NSString
+        let size = str.size(withAttributes: attrs)
+        str.draw(at: NSPoint(x: w / 2 - size.width / 2, y: h / 2 + 100), withAttributes: attrs)
+    }
+
+    private func drawPauseOverlay(ctx: CGContext, w: CGFloat, h: CGFloat) {
+        ctx.setFillColor(NSColor(white: 0.0, alpha: 0.55).cgColor)
+        ctx.fill(bounds)
+
+        let pauseStr = "⏸" as NSString
+        let pauseAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 60)]
+        let ps = pauseStr.size(withAttributes: pauseAttrs)
+        pauseStr.draw(at: NSPoint(x: w / 2 - ps.width / 2, y: h / 2 + 30), withAttributes: pauseAttrs)
+
+        let titleStr = L.shared.s("g_paused") as NSString
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 26),
+            .foregroundColor: NSColor.white,
+        ]
+        let ts = titleStr.size(withAttributes: titleAttrs)
+        titleStr.draw(at: NSPoint(x: w / 2 - ts.width / 2, y: h / 2 - 10), withAttributes: titleAttrs)
+
+        let pulse = 0.5 + 0.5 * sin(CGFloat(frameCount) * 0.06)
+        let hintStr = L.shared.s("g_resume_hint") as NSString
+        let hintAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14),
+            .foregroundColor: NSColor(white: 1.0, alpha: pulse),
+        ]
+        let hs = hintStr.size(withAttributes: hintAttrs)
+        hintStr.draw(at: NSPoint(x: w / 2 - hs.width / 2, y: h / 2 - 45), withAttributes: hintAttrs)
     }
 
     private func drawMonkey(ctx: CGContext, w: CGFloat) {
@@ -799,6 +1120,15 @@ final class GameView: NSView {
         let subSize = subStr.size(withAttributes: subAttrs)
         subStr.draw(at: NSPoint(x: w / 2 - subSize.width / 2, y: h / 2 - 5), withAttributes: subAttrs)
 
+        // Legend for special bananas
+        let legendStr = L.shared.s("g_legend") as NSString
+        let legendAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: NSColor(white: 0.75, alpha: 0.9),
+        ]
+        let legendSize = legendStr.size(withAttributes: legendAttrs)
+        legendStr.draw(at: NSPoint(x: w / 2 - legendSize.width / 2, y: h / 2 - 28), withAttributes: legendAttrs)
+
         // High score
         if highScore > 0 {
             let hsStr = L.shared.sf("g_best_score", highScore) as NSString
@@ -807,7 +1137,7 @@ final class GameView: NSView {
                 .foregroundColor: NSColor(red: 1.0, green: 0.85, blue: 0.3, alpha: 0.9),
             ]
             let hsSize = hsStr.size(withAttributes: hsAttrs)
-            hsStr.draw(at: NSPoint(x: w / 2 - hsSize.width / 2, y: h / 2 - 35), withAttributes: hsAttrs)
+            hsStr.draw(at: NSPoint(x: w / 2 - hsSize.width / 2, y: h / 2 - 52), withAttributes: hsAttrs)
         }
 
         // Pulsing "Press any key" text

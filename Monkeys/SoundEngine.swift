@@ -306,16 +306,109 @@ final class SoundEngine: @unchecked Sendable {
             player.play()
         }
     }
+
+    /// Plays the sparkling golden-banana chime.
+    func playGolden() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard isEnabled, engine.isRunning else { return }
+
+        if let buffer = synthesizer.generateGoldenChime() {
+            let player = nextPlayer()
+            player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+            player.play()
+        }
+    }
+
+    /// Plays the melancholic game-over jingle.
+    func playGameOver() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard isEnabled, engine.isRunning else { return }
+
+        if let buffer = synthesizer.generateGameOverJingle() {
+            let player = nextPlayer()
+            player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+            player.play()
+        }
+    }
+
+    /// Plays one countdown tick (3… 2… 1…).
+    func playCountdownTick() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard isEnabled, engine.isRunning else { return }
+
+        if let buffer = synthesizer.generateCountdownTick() {
+            let player = nextPlayer()
+            player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+            player.play()
+        }
+    }
+
+    /// Plays the bright "GO!" chime at the end of a countdown.
+    func playCountdownGo() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard isEnabled, engine.isRunning else { return }
+
+        if let buffer = synthesizer.generateCountdownGo() {
+            let player = nextPlayer()
+            player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+            player.play()
+        }
+    }
+
+    /// Plays a single sample click of `previewProfile` so the user can audition
+    /// a sound profile from the menu without typing.
+    func playPreviewClick(_ previewProfile: SoundProfile) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard engine.isRunning else { return }
+
+        if let buffer = synthesizer.generateClickDown(
+            profile: previewProfile,
+            pitchVariation: 0.5,
+            isLargeKey: false
+        ) {
+            let player = nextPlayer()
+            player.volume = 1.0
+            player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+            player.play()
+        }
+    }
+
     // MARK: - Background Music
 
     private var backgroundMusicPlayer: AVAudioPlayer?
+    private var isMusicEnabled: Bool = true
+    private static let musicVolume: Float = 0.15
 
-    /// Starts looping background music.
+    /// Enables or disables game background music (independent of key sounds).
+    func setMusicEnabled(_ enabled: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        isMusicEnabled = enabled
+        if !enabled {
+            backgroundMusicPlayer?.setVolume(0.0, fadeDuration: 0.5)
+            let player = backgroundMusicPlayer
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                player?.stop()
+            }
+        }
+    }
+
+    /// Starts looping background music with a gentle fade-in.
     func startMusic() {
         lock.lock()
         defer { lock.unlock() }
 
-        guard isEnabled else { return }
+        guard isEnabled, isMusicEnabled else { return }
 
         if let player = backgroundMusicPlayer, player.isPlaying {
             return
@@ -329,7 +422,6 @@ final class SoundEngine: @unchecked Sendable {
             do {
                 backgroundMusicPlayer = try AVAudioPlayer(contentsOf: url)
                 backgroundMusicPlayer?.numberOfLoops = -1
-                backgroundMusicPlayer?.volume = 0.15
                 backgroundMusicPlayer?.prepareToPlay()
             } catch {
                 print("SoundEngine: failed to load background music - \(error)")
@@ -337,14 +429,42 @@ final class SoundEngine: @unchecked Sendable {
             }
         }
 
+        backgroundMusicPlayer?.volume = 0.0
         backgroundMusicPlayer?.play()
+        backgroundMusicPlayer?.setVolume(Self.musicVolume, fadeDuration: 1.2)
     }
 
-    /// Stops the background music.
+    /// Stops the background music with a short fade-out.
     func stopMusic() {
         lock.lock()
         defer { lock.unlock() }
 
-        backgroundMusicPlayer?.stop()
+        guard let player = backgroundMusicPlayer, player.isPlaying else { return }
+        player.setVolume(0.0, fadeDuration: 0.6)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak player] in
+            player?.stop()
+        }
+    }
+
+    /// Pauses the music (keeps position) with a quick fade — used for in-game pause.
+    func pauseMusic() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard let player = backgroundMusicPlayer, player.isPlaying else { return }
+        player.setVolume(0.0, fadeDuration: 0.3)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak player] in
+            player?.pause()
+        }
+    }
+
+    /// Resumes paused music with a fade-in.
+    func resumeMusic() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard isEnabled, isMusicEnabled, let player = backgroundMusicPlayer, !player.isPlaying else { return }
+        player.play()
+        player.setVolume(Self.musicVolume, fadeDuration: 0.8)
     }
 }
