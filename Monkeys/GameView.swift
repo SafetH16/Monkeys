@@ -121,6 +121,9 @@ final class GameView: NSView {
     private let freezeDuration: Int = 300              // 5 s at 60 fps
     private var isFever: Bool { comboCount >= 8 }      // double points while on a hot streak
 
+    // Zen mode: no lives lost — relaxed play for younger players (persisted)
+    private var isZenMode: Bool = UserDefaults.standard.bool(forKey: "MonkeysZenMode")
+
     // Monkey
     private var monkeyX: CGFloat = 210.0
     private var monkeyTargetX: CGFloat = 210.0
@@ -343,7 +346,7 @@ final class GameView: NSView {
                                         NSColor(red: 0.8, green: 0.95, blue: 1.0, alpha: 0.8)])
                 continue
             }
-            lives -= 1
+            if !isZenMode { lives -= 1 }
             comboCount = 0
             shakeFrames = 12
             spawnParticles(at: CGPoint(x: banana.position.x, y: groundY),
@@ -446,7 +449,7 @@ final class GameView: NSView {
         onStopMusic?()
         onPlayGameOverSound?()
         onGameOver?()
-        if score > highScore {
+        if score > highScore && !isZenMode {
             highScore = score
             UserDefaults.standard.set(highScore, forKey: "MonkeysHighScore")
         }
@@ -456,6 +459,12 @@ final class GameView: NSView {
 
     func handleKeyTyped(_ char: Character) {
         if isWaitingToStart {
+            // Z toggles Zen mode on the start screen; any other key starts
+            if char == "z" || char == "Z" {
+                isZenMode.toggle()
+                UserDefaults.standard.set(isZenMode, forKey: "MonkeysZenMode")
+                return
+            }
             isWaitingToStart = false
             onStartMusic?()
             return
@@ -485,7 +494,7 @@ final class GameView: NSView {
 
             // Typing a bomb's letter detonates it!
             if banana.kind == .bomb {
-                lives -= 1
+                if !isZenMode { lives -= 1 }
                 comboCount = 0
                 shakeFrames = 18
                 spawnParticles(at: pos, count: 22,
@@ -561,6 +570,24 @@ final class GameView: NSView {
         } else {
             comboCount = 0
             onPlayFailSound?()
+        }
+    }
+
+    // MARK: - Mouse Input
+
+    override func mouseDown(with event: NSEvent) {
+        if isWaitingToStart {
+            isWaitingToStart = false
+            onStartMusic?()
+            return
+        }
+        if isGameOver {
+            resetGame()
+            return
+        }
+        if isPaused {
+            isPaused = false
+            onResumeMusic?()
         }
     }
 
@@ -1166,14 +1193,25 @@ final class GameView: NSView {
             .foregroundColor: NSColor.white,
         ])
 
-        // Lives — five vector hearts, centered
-        let heartSpacing: CGFloat = 17
-        let firstHeartX = w / 2 - heartSpacing * 2
-        for i in 0..<5 {
-            drawHeart(ctx: ctx,
-                      at: CGPoint(x: firstHeartX + CGFloat(i) * heartSpacing, y: panelRect.midY),
-                      size: 11,
-                      filled: i < lives)
+        // Lives — five vector hearts, centered (or ∞ in Zen mode)
+        if isZenMode {
+            let zenStr = "∞" as NSString
+            let zenAttrs: [NSAttributedString.Key: Any] = [
+                .font: roundedFont(size: 18, weight: .bold),
+                .foregroundColor: NSColor(red: 0.6, green: 0.9, blue: 1.0, alpha: 0.95),
+            ]
+            let zs = zenStr.size(withAttributes: zenAttrs)
+            zenStr.draw(at: NSPoint(x: w / 2 - zs.width / 2, y: panelRect.midY - zs.height / 2 + 1),
+                        withAttributes: zenAttrs)
+        } else {
+            let heartSpacing: CGFloat = 17
+            let firstHeartX = w / 2 - heartSpacing * 2
+            for i in 0..<5 {
+                drawHeart(ctx: ctx,
+                          at: CGPoint(x: firstHeartX + CGFloat(i) * heartSpacing, y: panelRect.midY),
+                          size: 11,
+                          filled: i < lives)
+            }
         }
 
         // Level label (right) with a thin progress bar to the next level
@@ -1278,6 +1316,18 @@ final class GameView: NSView {
         ]
         let legendSize = legendStr.size(withAttributes: legendAttrs)
         legendStr.draw(at: NSPoint(x: w / 2 - legendSize.width / 2, y: h / 2 - 28), withAttributes: legendAttrs)
+
+        // Zen mode hint + current state
+        let zenText = isZenMode ? "🧘 \(L.shared.s("g_zen_hint"))  ✓" : "🧘 \(L.shared.s("g_zen_hint"))"
+        let zenStr = zenText as NSString
+        let zenAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: isZenMode ?
+                NSColor(red: 0.6, green: 0.9, blue: 1.0, alpha: 0.95) :
+                NSColor(white: 0.55, alpha: 0.8),
+        ]
+        let zenSize = zenStr.size(withAttributes: zenAttrs)
+        zenStr.draw(at: NSPoint(x: w / 2 - zenSize.width / 2, y: h / 2 - 108), withAttributes: zenAttrs)
 
         // High score
         if highScore > 0 {

@@ -5,7 +5,9 @@ import Cocoa
 final class Updater: @unchecked Sendable {
     static let shared = Updater()
     
-    private let token = "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"
+    // Updates are fetched anonymously from the public GitHub Releases API.
+    // Never embed credentials here: anything compiled into the binary can be
+    // extracted by anyone who downloads the app.
     private let repoOwner = "SafetH16"
     private let repoName = "Monkeys"
     
@@ -20,7 +22,6 @@ final class Updater: @unchecked Sendable {
         guard let url = URL(string: urlString) else { return }
         
         var request = URLRequest(url: url)
-        request.setValue("token \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
         request.setValue("MonKeys-App", forHTTPHeaderField: "User-Agent")
         
@@ -47,9 +48,10 @@ final class Updater: @unchecked Sendable {
                     if cleanLatest.compare(cleanCurrent, options: .numeric) == .orderedDescending {
                         // Find MonKeys.zip asset
                         if let asset = assets.first(where: { ($0["name"] as? String) == "MonKeys.zip" }),
-                           let assetId = asset["id"] as? Int {
+                           let downloadURLString = asset["browser_download_url"] as? String,
+                           let downloadURL = URL(string: downloadURLString) {
                             Task { @MainActor in
-                                self.promptUpdate(version: tagName, assetId: assetId)
+                                self.promptUpdate(version: tagName, downloadURL: downloadURL)
                             }
                         }
                     } else {
@@ -71,7 +73,7 @@ final class Updater: @unchecked Sendable {
         task.resume()
     }
     
-    private func promptUpdate(version: String, assetId: Int) {
+    private func promptUpdate(version: String, downloadURL: URL) {
         let alert = NSAlert()
         alert.messageText = "Aggiornamento Disponibile"
         alert.informativeText = "È disponibile una nuova versione di MonKeys (\(version)). Desideri scaricarla e installarla automaticamente?"
@@ -81,16 +83,12 @@ final class Updater: @unchecked Sendable {
         
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            downloadAndInstallUpdate(assetId: assetId)
+            downloadAndInstallUpdate(from: downloadURL)
         }
     }
     
-    private func downloadAndInstallUpdate(assetId: Int) {
-        let urlString = "https://api.github.com/repos/\(repoOwner)/\(repoName)/releases/assets/\(assetId)"
-        guard let url = URL(string: urlString) else { return }
-        
+    private func downloadAndInstallUpdate(from url: URL) {
         var request = URLRequest(url: url)
-        request.setValue("token \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
         request.setValue("MonKeys-App", forHTTPHeaderField: "User-Agent")
         

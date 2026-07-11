@@ -597,6 +597,13 @@ final class SpeedTypeView: NSView {
         onStopMusic?()
         let wpm = calculateWPM()
         wpmHistory.append(wpm)
+
+        // Keep the last 5 runs for this difficulty
+        let historyKey = "MonkeysSpeedHistory_\(selectedLevel.rawValue)"
+        var recent = UserDefaults.standard.array(forKey: historyKey) as? [Int] ?? []
+        recent.insert(wpm, at: 0)
+        if recent.count > 5 { recent = Array(recent.prefix(5)) }
+        UserDefaults.standard.set(recent, forKey: historyKey)
         if wpm > highScoreWPM && wpm > 0 {
             highScoreWPM = wpm
             UserDefaults.standard.set(highScoreWPM, forKey: selectedLevel.highScoreKey)
@@ -734,6 +741,81 @@ final class SpeedTypeView: NSView {
         }
     }
 
+    // MARK: - Mouse Input
+
+    /// Frame of the difficulty card at `index` — single source of truth for
+    /// both drawing and mouse hit-testing.
+    private func levelCardRect(index: Int) -> CGRect {
+        let w = bounds.width
+        let h = bounds.height
+        let cardWidth: CGFloat = w - 60
+        let cardHeight: CGFloat = 56
+        let cardSpacing: CGFloat = 8
+        let totalCardsHeight = CGFloat(DifficultyLevel.allCases.count) * (cardHeight + cardSpacing)
+        let startY = h / 2 + totalCardsHeight / 2 - 30
+        let cardY = startY - CGFloat(index) * (cardHeight + cardSpacing)
+        return CGRect(x: 30, y: cardY, width: cardWidth, height: cardHeight)
+    }
+
+    private func levelCardIndex(at point: CGPoint) -> Int? {
+        for index in 0..<DifficultyLevel.allCases.count where levelCardRect(index: index).contains(point) {
+            return index
+        }
+        return nil
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard phase == .waiting else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let newHover = levelCardIndex(at: point) ?? -1
+        if newHover != hoveredLevel {
+            hoveredLevel = newHover
+            NSCursor.pointingHand.set()
+            if newHover == -1 { NSCursor.arrow.set() }
+            setNeedsDisplay(bounds)
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoveredLevel = -1
+        NSCursor.arrow.set()
+        setNeedsDisplay(bounds)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        switch phase {
+        case .waiting:
+            let point = convert(event.locationInWindow, from: nil)
+            if let index = levelCardIndex(at: point) {
+                if index == selectedLevelIndex {
+                    // Click on the already-selected card starts the game
+                    NSCursor.arrow.set()
+                    beginCountdown()
+                } else {
+                    selectedLevelIndex = index
+                    selectedLevel = DifficultyLevel.allCases[index]
+                    loadHighScore()
+                    setNeedsDisplay(bounds)
+                }
+            }
+        case .finished:
+            resetGame()
+        case .countdown, .playing:
+            break
+        }
+    }
+
     // MARK: - Drawing
 
     override func draw(_ rect: NSRect) {
@@ -839,16 +921,15 @@ final class SpeedTypeView: NSView {
                      color: NSColor(white: 0.8, alpha: 1.0), in: w)
 
         // Draw level cards
-        let cardWidth: CGFloat = w - 60
         let cardHeight: CGFloat = 56
         let cardSpacing: CGFloat = 8
         let totalCardsHeight = CGFloat(DifficultyLevel.allCases.count) * (cardHeight + cardSpacing)
         let startY = h / 2 + totalCardsHeight / 2 - 30
 
         for (index, level) in DifficultyLevel.allCases.enumerated() {
-            let cardY = startY - CGFloat(index) * (cardHeight + cardSpacing)
-            let cardRect = CGRect(x: 30, y: cardY, width: cardWidth, height: cardHeight)
+            let cardRect = levelCardRect(index: index)
             let isSelected = index == selectedLevelIndex
+            let isHovered = index == hoveredLevel
 
             // Card background
             if isSelected {
@@ -861,6 +942,8 @@ final class SpeedTypeView: NSView {
                 ctx.fillPath()
 
                 ctx.setFillColor(NSColor(white: 0.12, alpha: 0.95).cgColor)
+            } else if isHovered {
+                ctx.setFillColor(NSColor(white: 0.14, alpha: 0.85).cgColor)
             } else {
                 ctx.setFillColor(NSColor(white: 0.08, alpha: 0.7).cgColor)
             }
@@ -869,10 +952,15 @@ final class SpeedTypeView: NSView {
             ctx.addPath(cardPath)
             ctx.fillPath()
 
-            // Selected indicator border
+            // Selected/hovered indicator border
             if isSelected {
                 ctx.setStrokeColor(level.color.withAlphaComponent(0.8).cgColor)
                 ctx.setLineWidth(2.0)
+                ctx.addPath(cardPath)
+                ctx.strokePath()
+            } else if isHovered {
+                ctx.setStrokeColor(level.color.withAlphaComponent(0.35).cgColor)
+                ctx.setLineWidth(1.5)
                 ctx.addPath(cardPath)
                 ctx.strokePath()
             }
@@ -1194,6 +1282,14 @@ final class SpeedTypeView: NSView {
         drawCentered(L.shared.sf("g_best_score", highScoreWPM), y: h / 2 - 70, size: 14,
                      color: NSColor(red: 1.0, green: 0.85, blue: 0.3, alpha: 0.8), in: w)
 
+        // Recent runs for this difficulty
+        let historyKey = "MonkeysSpeedHistory_\(selectedLevel.rawValue)"
+        if let recent = UserDefaults.standard.array(forKey: historyKey) as? [Int], recent.count > 1 {
+            let joined = recent.map { "\($0)" }.joined(separator: " · ")
+            drawCentered(L.shared.sf("st_recent", joined), y: h / 2 - 90, size: 11,
+                         color: NSColor(white: 0.6, alpha: 0.9), in: w)
+        }
+
         // WPM-over-time chart
         drawWPMChart(ctx: ctx, w: w, h: h)
 
@@ -1205,12 +1301,12 @@ final class SpeedTypeView: NSView {
         else if wpm >= 20 { msg = L.shared.s("st_good_start") }
         else { msg = L.shared.s("st_keep_trying") }
 
-        drawCentered(msg, y: h / 2 - 150, size: 14,
+        drawCentered(msg, y: h / 2 - 162, size: 14,
                      color: NSColor(white: 0.8, alpha: 0.9), in: w)
 
         // Restart hint
         let pulse = 0.5 + 0.5 * sin(CGFloat(frameCount) * 0.06)
-        drawCentered(L.shared.s("g_press_restart"), y: h / 2 - 180, size: 14,
+        drawCentered(L.shared.s("g_press_restart"), y: h / 2 - 188, size: 14,
                      color: NSColor(white: 1.0, alpha: pulse), in: w)
 
         // Confetti on a new record — drawn on top of everything
@@ -1224,7 +1320,7 @@ final class SpeedTypeView: NSView {
         let chartW: CGFloat = 220
         let chartH: CGFloat = 34
         let originX = w / 2 - chartW / 2
-        let originY = h / 2 - 125
+        let originY = h / 2 - 138
 
         // Panel
         ctx.setFillColor(NSColor(white: 0.0, alpha: 0.35).cgColor)

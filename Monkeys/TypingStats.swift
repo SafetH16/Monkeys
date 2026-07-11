@@ -16,12 +16,19 @@ final class TypingStats: @unchecked Sendable {
     private var peakWPM: Int = 0
     private var allTimeKeyCount: Int = 0
 
+    /// All-time per-key press counts, keyed by CGEvent key code (as String
+    /// for UserDefaults compatibility). Persisted in batches to keep the
+    /// hot path cheap.
+    private var keyCounts: [String: Int] = [:]
+    private var unsavedKeyCounts: Int = 0
+
     // MARK: - UserDefaults Keys
 
     private let kTodayKeyCount = "MonkeysTodayKeyCount"
     private let kTodayDate = "MonkeysTodayDate"
     private let kPeakWPM = "MonkeysPeakWPM"
     private let kAllTimeKeyCount = "MonkeysAllTimeKeyCount"
+    private let kKeyCounts = "MonkeysKeyCounts"
 
     // MARK: - Initialisation
 
@@ -32,15 +39,49 @@ final class TypingStats: @unchecked Sendable {
     // MARK: - Public API
 
     /// Records a keystroke. Returns the updated today count.
-    func recordKeystroke() -> Int {
+    /// Pass the key code to also feed the per-key heatmap counters.
+    @discardableResult
+    func recordKeystroke(keyCode: Int64? = nil) -> Int {
         lock.lock()
         defer { lock.unlock() }
 
         checkDateRollover()
         todayKeyCount += 1
         allTimeKeyCount += 1
+
+        if let keyCode {
+            keyCounts["\(keyCode)", default: 0] += 1
+            unsavedKeyCounts += 1
+            // Persist the (potentially large) dictionary in batches
+            if unsavedKeyCounts >= 25 {
+                UserDefaults.standard.set(keyCounts, forKey: kKeyCounts)
+                unsavedKeyCounts = 0
+            }
+        }
+
         save()
         return todayKeyCount
+    }
+
+    /// Returns a snapshot of the all-time per-key press counts.
+    func getKeyCounts() -> [Int64: Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        var result: [Int64: Int] = [:]
+        for (key, count) in keyCounts {
+            if let code = Int64(key) { result[code] = count }
+        }
+        return result
+    }
+
+    /// Flushes any batched per-key counts to disk (call on app termination).
+    func flush() {
+        lock.lock()
+        defer { lock.unlock() }
+        if unsavedKeyCounts > 0 {
+            UserDefaults.standard.set(keyCounts, forKey: kKeyCounts)
+            unsavedKeyCounts = 0
+        }
     }
 
     /// Updates the peak WPM if the new value is higher.
@@ -127,6 +168,7 @@ final class TypingStats: @unchecked Sendable {
         todayDate = UserDefaults.standard.string(forKey: kTodayDate) ?? currentDateString()
         peakWPM = UserDefaults.standard.integer(forKey: kPeakWPM)
         allTimeKeyCount = UserDefaults.standard.integer(forKey: kAllTimeKeyCount)
+        keyCounts = UserDefaults.standard.dictionary(forKey: kKeyCounts) as? [String: Int] ?? [:]
         checkDateRollover()
     }
 

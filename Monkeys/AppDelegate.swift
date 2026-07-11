@@ -1,5 +1,6 @@
 @preconcurrency import Cocoa
 import Carbon
+import ServiceManagement
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -15,6 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var wpmTimer: Timer?
     private var gameWindow: GameWindow?
     private var speedTypeWindow: SpeedTypeWindow?
+    private var statsWindow: StatsWindow?
+    private var onboardingWindow: OnboardingWindow?
 
     // Menu item references for state updates
     private var toggleMenuItem: NSMenuItem!
@@ -26,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var autoMuteMenuItem: NSMenuItem!
     private var peakWpmMenuItem: NSMenuItem!
     private var musicMenuItem: NSMenuItem!
+    private var loginMenuItem: NSMenuItem!
 
     private let allProfiles: [SoundProfile] = [
         .blue, .brown, .red, .black, .silentRed, .speedSilver,
@@ -42,22 +46,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - NSApplicationDelegate
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 1. Check accessibility permission
+        // 1. Check accessibility permission — friendly onboarding window
         if !KeyboardMonitor.checkAccessibilityPermission() {
-            let alert = NSAlert()
-            alert.messageText = "Permesso di Accessibilità Richiesto"
-            alert.informativeText = """
-                Monkeys ha bisogno del permesso di Accessibilità per \
-                rilevare la pressione dei tasti e riprodurre i suoni della \
-                tastiera meccanica.
-
-                Clicca OK per aprire le Impostazioni di Sistema, poi \
-                abilita Monkeys nella sezione Accessibilità.
-                """
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
-            KeyboardMonitor.requestAccessibilityPermission()
+            let onboarding = OnboardingWindow()
+            onboarding.onOpenSettings = { [weak self] in
+                KeyboardMonitor.requestAccessibilityPermission()
+                self?.onboardingWindow?.close()
+            }
+            onboardingWindow = onboarding
+            onboarding.center()
+            onboarding.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
         }
 
         // 2. Set up keyboard monitor callbacks
@@ -66,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.soundEngine.playKeyDown(keyCode: keyCode, isRepeat: isRepeat)
             if !isRepeat {
                 _ = self.wpmTracker.recordKeyPress()
-                _ = self.typingStats.recordKeystroke()
+                self.typingStats.recordKeystroke(keyCode: keyCode)
             }
         }
         keyboardMonitor.onKeyUp = { [weak self] keyCode in
@@ -142,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wpmTimer?.invalidate()
         keyboardMonitor.stop()
         appProfileManager.stop()
+        typingStats.flush()
     }
 
     // MARK: - Menu Bar Setup
@@ -211,6 +211,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         autoMuteMenuItem.target = self
         menu.addItem(autoMuteMenuItem)
+
+        // Launch at login (macOS 13+)
+        if #available(macOS 13.0, *) {
+            let isLoginEnabled = SMAppService.mainApp.status == .enabled
+            loginMenuItem = NSMenuItem(
+                title: isLoginEnabled ? L.shared.s("launch_login_on") : L.shared.s("launch_login_off"),
+                action: #selector(toggleLaunchAtLogin), keyEquivalent: ""
+            )
+            loginMenuItem.target = self
+            menu.addItem(loginMenuItem)
+        }
 
         menu.addItem(.separator())
 
@@ -301,6 +312,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         totalItem.isEnabled = false
         statsSubmenu.addItem(totalItem)
 
+        statsSubmenu.addItem(.separator())
+        let statsPanelItem = NSMenuItem(title: L.shared.s("stats_open"), action: #selector(openStatsPanel), keyEquivalent: "s")
+        statsPanelItem.target = self
+        statsSubmenu.addItem(statsPanelItem)
+
         menu.setSubmenu(statsSubmenu, for: statsItem)
         menu.addItem(statsItem)
 
@@ -354,6 +370,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let volume = Float(sender.integerValue) / 100.0
         soundEngine.setVolume(volume)
         UserDefaults.standard.set(sender.integerValue, forKey: "MonkeysVolume")
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        guard #available(macOS 13.0, *) else { return }
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            print("LaunchAtLogin: toggle failed - \(error)")
+        }
+        let enabled = SMAppService.mainApp.status == .enabled
+        loginMenuItem.title = enabled ? L.shared.s("launch_login_on") : L.shared.s("launch_login_off")
+    }
+
+    @objc private func openStatsPanel() {
+        if statsWindow == nil {
+            statsWindow = StatsWindow()
+        }
+        statsWindow?.statsView.reload(from: typingStats)
+        statsWindow?.center()
+        statsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func toggleMusic() {
