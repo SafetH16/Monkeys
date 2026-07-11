@@ -33,11 +33,13 @@ final class SpeedTypeWindow: NSWindow, NSWindowDelegate {
     override var canBecomeMain: Bool { true }
 
     override func keyDown(with event: NSEvent) {
-        // Handle backspace
+        // Handle backspace (auto-repeat allowed: holding it keeps deleting)
         if event.keyCode == 51 {
             speedTypeView.handleKeyTyped("\u{7F}")
             return
         }
+        // For every other key, ignore auto-repeat to avoid input spam
+        guard !event.isARepeat else { return }
         // Handle arrow keys by keyCode (macOS doesn't reliably pass arrows as characters)
         // 126 = Up, 125 = Down, 124 = Right, 123 = Left
         if event.keyCode == 126 || event.keyCode == 123 {
@@ -55,6 +57,6 @@ final class SpeedTypeWindow: NSWindow, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         speedTypeView.onStopMusic?()
-        speedTypeView.resetGame()
+        speedTypeView.stopGame()
     }
 }

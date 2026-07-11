@@ -51,6 +51,8 @@ final class GameWindow: NSWindow, NSWindowDelegate {
     }
 
     override func keyDown(with event: NSEvent) {
+        // Ignore key auto-repeat: holding a key must not spam inputs/fail sounds
+        guard !event.isARepeat else { return }
         if let chars = event.characters, let firstChar = chars.first {
             gameView.handleKeyTyped(firstChar)
         }
@@ -60,6 +62,6 @@ final class GameWindow: NSWindow, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         gameView.onStopMusic?()
-        gameView.resetGame()
+        gameView.stopGame()
     }
 }

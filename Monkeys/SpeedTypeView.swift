@@ -403,6 +403,12 @@ final class SpeedTypeView: NSView {
     private var finishedAsRecord: Bool = false
     private var confetti: [Confetto] = []
 
+    // Next phrase, shown dimmed under the input so there's no dead time
+    private var upcomingText: String = ""
+
+    // Green flash on the text panel when a phrase is completed
+    private var wordFlashFrames: Int = 0
+
     // MARK: - Init
 
     override init(frame: NSRect) {
@@ -457,6 +463,13 @@ final class SpeedTypeView: NSView {
         }
     }
 
+    /// Stops the game loop entirely — call when the window closes so the
+    /// 60 fps timer doesn't keep burning CPU in the background.
+    func stopGame() {
+        gameTimer?.invalidate()
+        gameTimer = nil
+    }
+
     private func loadHighScore() {
         highScoreWPM = UserDefaults.standard.integer(forKey: selectedLevel.highScoreKey)
     }
@@ -483,22 +496,36 @@ final class SpeedTypeView: NSView {
         wpmHistory = []
         finishedAsRecord = false
         confetti.removeAll()
+        wordFlashFrames = 0
+        upcomingText = "" // force a fresh pick for the selected difficulty
         loadHighScore()
         pickNewText()
     }
 
-    private func pickNewText() {
+    private func randomText() -> String {
         let banks = wordBanksForCurrentLanguage()
         switch selectedLevel {
-        case .beginner:
-            currentText = banks.beginner.randomElement()!
-        case .intermediate:
-            currentText = banks.intermediate.randomElement()!
-        case .expert:
-            currentText = banks.expert.randomElement()!
-        case .master:
-            currentText = banks.master.randomElement()!
+        case .beginner:     return banks.beginner.randomElement()!
+        case .intermediate: return banks.intermediate.randomElement()!
+        case .expert:       return banks.expert.randomElement()!
+        case .master:       return banks.master.randomElement()!
         }
+    }
+
+    private func pickNewText() {
+        // Promote the previewed phrase, avoiding immediate repeats
+        if upcomingText.isEmpty || upcomingText == currentText {
+            currentText = randomText()
+        } else {
+            currentText = upcomingText
+        }
+        var next = randomText()
+        var attempts = 0
+        while next == currentText && attempts < 5 {
+            next = randomText()
+            attempts += 1
+        }
+        upcomingText = next
         typedText = ""
     }
 
@@ -521,6 +548,9 @@ final class SpeedTypeView: NSView {
                 monkeyEmoji = "🐵"
             }
         }
+
+        // Word-complete flash decay
+        if wordFlashFrames > 0 { wordFlashFrames -= 1 }
 
         // Countdown phase: tick every second, then GO
         if phase == .countdown {
@@ -682,6 +712,7 @@ final class SpeedTypeView: NSView {
             // Word completed?
             if typedText.count == currentText.count {
                 wordsCompleted += 1
+                wordFlashFrames = 18
                 onPlaySuccessSound?()
 
                 if combo >= 5 {
@@ -980,15 +1011,40 @@ final class SpeedTypeView: NSView {
         let textAreaH: CGFloat = 60
         let textAreaRect = CGRect(x: 20, y: textAreaY, width: w - 40, height: textAreaH)
 
-        // Background panel
+        // Background panel — flashes green when a phrase is completed
         ctx.setFillColor(NSColor(white: 0.0, alpha: 0.4).cgColor)
         let panelPath = CGPath(roundedRect: textAreaRect.insetBy(dx: -10, dy: -10),
                                cornerWidth: 12, cornerHeight: 12, transform: nil)
         ctx.addPath(panelPath)
         ctx.fillPath()
+        if wordFlashFrames > 0 {
+            let flashAlpha = CGFloat(wordFlashFrames) / 18.0
+            ctx.setStrokeColor(NSColor(red: 0.3, green: 1.0, blue: 0.4, alpha: 0.8 * flashAlpha).cgColor)
+            ctx.setLineWidth(2.5)
+            ctx.addPath(panelPath)
+            ctx.strokePath()
+        }
 
         // Draw target text with colored characters
         drawTargetText(in: textAreaRect, w: w)
+
+        // Next phrase preview, dimmed, under the text panel
+        if !upcomingText.isEmpty {
+            let previewStr = "→ \(upcomingText)" as NSString
+            let previewAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+                .foregroundColor: NSColor(white: 0.55, alpha: 0.55),
+            ]
+            var pSize = previewStr.size(withAttributes: previewAttrs)
+            var drawStr = previewStr
+            // Truncate if too wide for the window
+            if pSize.width > w - 60 {
+                let maxChars = Int((w - 80) / (pSize.width / CGFloat(previewStr.length)))
+                drawStr = (String(("→ " + upcomingText).prefix(maxChars)) + "…") as NSString
+                pSize = drawStr.size(withAttributes: previewAttrs)
+            }
+            drawStr.draw(at: NSPoint(x: w / 2 - pSize.width / 2, y: textAreaY - 32), withAttributes: previewAttrs)
+        }
 
         // Input area (what user has typed)
         let inputY = h / 2 - 70

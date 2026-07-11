@@ -15,6 +15,7 @@ final class GameView: NSView {
         case normal   // 🍌 regular banana
         case golden   // ⭐ bonus: extra points + heals one life
         case bomb     // 💣 trap: typing it costs a life
+        case ice      // ❄️ power-up: slows time for a few seconds
     }
 
     struct GameBanana {
@@ -115,6 +116,11 @@ final class GameView: NSView {
     private var bannerFrames: Int = 0
     private let bannerTotalFrames: Int = 90
 
+    // Power-ups
+    private var freezeFrames: Int = 0                  // > 0 while time is slowed
+    private let freezeDuration: Int = 300              // 5 s at 60 fps
+    private var isFever: Bool { comboCount >= 8 }      // double points while on a hot streak
+
     // Monkey
     private var monkeyX: CGFloat = 210.0
     private var monkeyTargetX: CGFloat = 210.0
@@ -134,7 +140,7 @@ final class GameView: NSView {
 
     // Spawning
     private var lastSpawnTime: Date = Date()
-    private var spawnInterval: TimeInterval = 2.5
+    private var spawnInterval: TimeInterval = 2.0
 
     // High score
     private var highScore: Int = UserDefaults.standard.integer(forKey: "MonkeysHighScore")
@@ -227,6 +233,7 @@ final class GameView: NSView {
         particles.removeAll()
         shakeFrames = 0
         bannerFrames = 0
+        freezeFrames = 0
         isPaused = false
         score = 0
         lives = 5
@@ -239,7 +246,7 @@ final class GameView: NSView {
         monkeyBounceOffset = 0
         monkeyBounceFrames = 0
         lastSpawnTime = Date()
-        spawnInterval = 2.5
+        spawnInterval = 2.0
         frameCount = 0
         gameElapsedSeconds = 0
         timeOfDay = .morning
@@ -251,6 +258,13 @@ final class GameView: NSView {
                 self?.gameTick()
             }
         }
+    }
+
+    /// Stops the game loop entirely — call when the window closes so the
+    /// 60 fps timer doesn't keep burning CPU in the background.
+    func stopGame() {
+        gameTimer?.invalidate()
+        gameTimer = nil
     }
 
     private func gameTick() {
@@ -289,20 +303,24 @@ final class GameView: NSView {
             palmTrees[i].sway += palmTrees[i].swaySpeed
         }
 
-        // Spawn bananas
+        // Spawn bananas (freeze slows the spawn cadence too)
         let now = Date()
-        let effectiveSpawnInterval = max(0.5, spawnInterval - Double(level - 1) * 0.15)
+        var effectiveSpawnInterval = max(0.45, spawnInterval - Double(level - 1) * 0.15)
+        if freezeFrames > 0 { effectiveSpawnInterval *= 1.6 }
         let maxBananas = 4 + level
         if now.timeIntervalSince(lastSpawnTime) >= effectiveSpawnInterval && bananas.count < maxBananas {
             spawnBanana()
             lastSpawnTime = now
         }
 
-        // Move bananas (each carries its own speed, with gentle horizontal wobble)
+        // Move bananas (each carries its own speed, with gentle horizontal wobble).
+        // While frozen, everything falls at 45% speed.
+        let timeScale: CGFloat = freezeFrames > 0 ? 0.45 : 1.0
+        if freezeFrames > 0 { freezeFrames -= 1 }
         for i in 0..<bananas.count {
-            bananas[i].position.y -= bananas[i].speed
-            bananas[i].wobblePhase += 0.05
-            bananas[i].position.x += sin(bananas[i].wobblePhase) * 0.4
+            bananas[i].position.y -= bananas[i].speed * timeScale
+            bananas[i].wobblePhase += 0.05 * timeScale
+            bananas[i].position.x += sin(bananas[i].wobblePhase) * 0.4 * timeScale
         }
 
         // Remove fallen bananas — a missed bomb is harmless, a missed banana costs a life
@@ -315,6 +333,14 @@ final class GameView: NSView {
                 spawnParticles(at: CGPoint(x: banana.position.x, y: groundY),
                                count: 8,
                                colors: [NSColor(white: 0.5, alpha: 0.8), NSColor(white: 0.35, alpha: 0.8)])
+                continue
+            }
+            if banana.kind == .ice {
+                // A missed power-up just melts away — no penalty
+                spawnParticles(at: CGPoint(x: banana.position.x, y: groundY),
+                               count: 8,
+                               colors: [NSColor(red: 0.6, green: 0.85, blue: 1.0, alpha: 0.8),
+                                        NSColor(red: 0.8, green: 0.95, blue: 1.0, alpha: 0.8)])
                 continue
             }
             lives -= 1
@@ -393,6 +419,8 @@ final class GameView: NSView {
         let roll = Double.random(in: 0...1)
         if level >= 2 && roll < 0.08 {
             kind = .golden
+        } else if level >= 4 && roll >= 0.08 && roll < 0.15 && freezeFrames == 0 {
+            kind = .ice
         } else if level >= 3 && roll > 0.88 {
             kind = .bomb
         } else {
@@ -400,7 +428,7 @@ final class GameView: NSView {
         }
 
         let x = CGFloat.random(in: 30...(bounds.width - 30))
-        var speed = (1.2 + CGFloat(level - 1) * 0.15) * CGFloat.random(in: 0.85...1.15)
+        var speed = (1.5 + CGFloat(level - 1) * 0.18) * CGFloat.random(in: 0.85...1.15)
         if kind == .golden { speed *= 1.35 } // golden bananas are faster — worth the chase
 
         let banana = GameBanana(
@@ -474,11 +502,13 @@ final class GameView: NSView {
 
             comboCount += 1
             let multiplier = min(comboCount >= 3 ? comboCount - 1 : 1, 5)
+            let feverBonus = isFever ? 2 : 1
 
-            let points: Int
+            var points: Int
             let popupText: String
-            if banana.kind == .golden {
-                points = 5 * max(1, multiplier)
+            switch banana.kind {
+            case .golden:
+                points = 5 * max(1, multiplier) * feverBonus
                 popupText = "+\(points) ⭐"
                 if lives < 5 { lives += 1 } // golden banana heals one life
                 spawnParticles(at: pos, count: 24,
@@ -486,9 +516,18 @@ final class GameView: NSView {
                                         NSColor(red: 1.0, green: 0.75, blue: 0.1, alpha: 1.0),
                                         NSColor.white])
                 onPlayGoldenSound?()
-            } else {
-                points = multiplier
-                popupText = multiplier > 1 ? "+\(points) 🔥" : "+1"
+            case .ice:
+                points = multiplier * feverBonus
+                popupText = "❄️"
+                freezeFrames = freezeDuration
+                spawnParticles(at: pos, count: 18,
+                               colors: [NSColor(red: 0.6, green: 0.85, blue: 1.0, alpha: 1.0),
+                                        NSColor(red: 0.8, green: 0.95, blue: 1.0, alpha: 1.0),
+                                        NSColor.white])
+                onPlayGoldenSound?()
+            case .normal, .bomb:
+                points = multiplier * feverBonus
+                popupText = feverBonus > 1 ? "+\(points) ⚡" : (multiplier > 1 ? "+\(points) 🔥" : "+1")
                 spawnParticles(at: pos, count: 12,
                                colors: [NSColor(red: 1.0, green: 0.9, blue: 0.3, alpha: 1.0),
                                         NSColor(red: 0.95, green: 0.75, blue: 0.15, alpha: 1.0)])
@@ -511,8 +550,8 @@ final class GameView: NSView {
                 onPlayLevelUpSound?()
             }
 
-            // Combo sound (golden already played its own chime)
-            if banana.kind != .golden {
+            // Combo sound (golden/ice already played their own chime)
+            if banana.kind != .golden && banana.kind != .ice {
                 if comboCount >= 3 {
                     onPlayComboSound?(comboCount)
                 } else {
@@ -586,6 +625,13 @@ final class GameView: NSView {
 
         // Draw score popups
         drawScorePopups(ctx: ctx)
+
+        // Icy tint while time is slowed
+        if freezeFrames > 0 {
+            let fade = min(1.0, CGFloat(freezeFrames) / 40.0)
+            ctx.setFillColor(NSColor(red: 0.5, green: 0.8, blue: 1.0, alpha: 0.10 * fade).cgColor)
+            ctx.fill(bounds)
+        }
 
         if isShaking { ctx.restoreGState() }
 
@@ -834,12 +880,24 @@ final class GameView: NSView {
         )!
         ctx.drawLinearGradient(gradient, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 0, y: groundH), options: [])
 
-        // Grass blades along the top
-        let grassEmojis = ["🌿", "🌱", "🍀", "🌾"]
-        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12)]
-        for i in stride(from: 5, to: Int(w), by: 18) {
-            let emoji = grassEmojis[i / 18 % grassEmojis.count]
-            (emoji as NSString).draw(at: NSPoint(x: CGFloat(i), y: groundH - 14), withAttributes: attrs)
+        // Vector grass blades along the top edge, gently swaying.
+        // Heights come from a position-based hash so they don't flicker per frame.
+        ctx.setLineWidth(1.6)
+        ctx.setLineCap(.round)
+        for i in stride(from: 0, to: Int(w), by: 7) {
+            let x = CGFloat(i)
+            let hash = sin(x * 12.9898) * 43758.5453
+            let frac = hash - floor(hash) // 0..1, stable per blade
+            let height = 5.0 + frac * 9.0
+            let sway = sin(CGFloat(frameCount) * 0.03 + x * 0.15) * 2.0
+            let shade = 0.75 + frac * 0.5
+            ctx.setStrokeColor(grassTop.withAlphaComponent(0.9)
+                .blended(withFraction: 1.0 - min(shade, 1.0), of: .black)?.cgColor ?? grassTop.cgColor)
+            ctx.beginPath()
+            ctx.move(to: CGPoint(x: x, y: groundH - 2))
+            ctx.addQuadCurve(to: CGPoint(x: x + sway, y: groundH + height),
+                             control: CGPoint(x: x + sway * 0.3, y: groundH + height * 0.5))
+            ctx.strokePath()
         }
     }
 
@@ -865,6 +923,12 @@ final class GameView: NSView {
                 glowColor = NSColor(red: 1.0, green: 0.2, blue: 0.1, alpha: pulse)
                 ctx.setFillColor(glowColor.cgColor)
                 ctx.fillEllipse(in: CGRect(x: x - 20, y: y - 20, width: 40, height: 40))
+            case .ice:
+                // Cool cyan halo
+                let pulse = 0.3 + 0.15 * sin(CGFloat(frameCount) * 0.12)
+                glowColor = NSColor(red: 0.5, green: 0.85, blue: 1.0, alpha: pulse)
+                ctx.setFillColor(glowColor.cgColor)
+                ctx.fillEllipse(in: CGRect(x: x - 22, y: y - 22, width: 44, height: 44))
             case .normal:
                 switch timeOfDay {
                 case .morning, .afternoon:
@@ -884,6 +948,7 @@ final class GameView: NSView {
             case .normal: emoji = "🍌"
             case .golden: emoji = "🌟"
             case .bomb:   emoji = "💣"
+            case .ice:    emoji = "❄️"
             }
             let bananaStr = emoji as NSString
             let bananaAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 26)]
@@ -900,6 +965,9 @@ final class GameView: NSView {
             case .bomb:
                 badgeColor = NSColor(red: 0.45, green: 0.08, blue: 0.05, alpha: 0.9)
                 letterColor = NSColor(red: 1.0, green: 0.75, blue: 0.7, alpha: 1.0)
+            case .ice:
+                badgeColor = NSColor(red: 0.1, green: 0.3, blue: 0.5, alpha: 0.9)
+                letterColor = NSColor(red: 0.8, green: 0.95, blue: 1.0, alpha: 1.0)
             case .normal:
                 badgeColor = NSColor(red: 0.2, green: 0.2, blue: 0.2, alpha: 0.85)
                 letterColor = .white
@@ -963,7 +1031,7 @@ final class GameView: NSView {
         let alpha: CGFloat = progress > 0.85 ? (1.0 - progress) / 0.15 : min(1.0, progress / 0.3)
 
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.boldSystemFont(ofSize: 30),
+            .font: roundedFont(size: 30, weight: .heavy),
             .foregroundColor: NSColor(red: 0.5, green: 1.0, blue: 0.5, alpha: alpha),
             .strokeColor: NSColor(red: 0.0, green: 0.3, blue: 0.0, alpha: alpha),
             .strokeWidth: -3.0,
@@ -1044,44 +1112,126 @@ final class GameView: NSView {
 
     // MARK: - HUD
 
+    /// System font with the rounded design — friendlier than the default
+    /// without looking childish.
+    private func roundedFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        let base = NSFont.systemFont(ofSize: size, weight: weight)
+        if let desc = base.fontDescriptor.withDesign(.rounded),
+           let rounded = NSFont(descriptor: desc, size: size) {
+            return rounded
+        }
+        return base
+    }
+
+    /// Draws a small vector heart (two lobes + triangle) — crisper than emoji
+    /// hearts at small sizes and adapts to filled/empty states.
+    private func drawHeart(ctx: CGContext, at c: CGPoint, size s: CGFloat, filled: Bool) {
+        let color = filled ?
+            NSColor(red: 1.0, green: 0.33, blue: 0.38, alpha: 0.95) :
+            NSColor(white: 1.0, alpha: 0.22)
+        ctx.setFillColor(color.cgColor)
+
+        let r = s * 0.28
+        // Two top lobes
+        ctx.fillEllipse(in: CGRect(x: c.x - 2 * r, y: c.y - r + s * 0.1, width: 2 * r, height: 2 * r))
+        ctx.fillEllipse(in: CGRect(x: c.x, y: c.y - r + s * 0.1, width: 2 * r, height: 2 * r))
+        // Bottom wedge down to the tip
+        let tri = CGMutablePath()
+        tri.move(to: CGPoint(x: c.x - 1.9 * r, y: c.y + s * 0.08))
+        tri.addLine(to: CGPoint(x: c.x + 1.9 * r, y: c.y + s * 0.08))
+        tri.addLine(to: CGPoint(x: c.x, y: c.y - s * 0.5))
+        tri.closeSubpath()
+        ctx.addPath(tri)
+        ctx.fillPath()
+    }
+
     private func drawHUD(ctx: CGContext, w: CGFloat, h: CGFloat) {
-        // Semi-transparent top bar
-        ctx.setFillColor(NSColor(white: 0.0, alpha: 0.4).cgColor)
-        ctx.fill(CGRect(x: 0, y: h - 45, width: w, height: 45))
+        // Translucent rounded panel with a hairline border
+        let panelRect = CGRect(x: 8, y: h - 46, width: w - 16, height: 38)
+        let panelPath = CGPath(roundedRect: panelRect, cornerWidth: 11, cornerHeight: 11, transform: nil)
+        ctx.setFillColor(NSColor(white: 0.0, alpha: 0.38).cgColor)
+        ctx.addPath(panelPath)
+        ctx.fillPath()
+        ctx.setStrokeColor(NSColor(white: 1.0, alpha: 0.10).cgColor)
+        ctx.setLineWidth(1.0)
+        ctx.addPath(panelPath)
+        ctx.strokePath()
 
-        // Score
-        let scoreStr = "⭐ \(score)" as NSString
-        let scoreAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.boldSystemFont(ofSize: 18),
+        // Score — banana glyph + monospaced digits
+        ("🍌" as NSString).draw(at: NSPoint(x: panelRect.minX + 10, y: panelRect.midY - 8),
+                                withAttributes: [.font: NSFont.systemFont(ofSize: 13)])
+        let scoreStr = "\(score)" as NSString
+        scoreStr.draw(at: NSPoint(x: panelRect.minX + 30, y: panelRect.midY - 10), withAttributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 17, weight: .bold),
             .foregroundColor: NSColor.white,
-        ]
-        scoreStr.draw(at: NSPoint(x: 12, y: h - 35), withAttributes: scoreAttrs)
+        ])
 
-        // Lives
-        let heartsStr = String(repeating: "❤️", count: lives) + String(repeating: "🖤", count: max(0, 5 - lives))
-        let heartsAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14)]
-        (heartsStr as NSString).draw(at: NSPoint(x: w / 2 - 50, y: h - 32), withAttributes: heartsAttrs)
-
-        // Level
-        let levelStr = "LV.\(level)" as NSString
-        let levelAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.boldSystemFont(ofSize: 16),
-            .foregroundColor: NSColor(red: 0.6, green: 1.0, blue: 0.6, alpha: 1.0),
-        ]
-        levelStr.draw(at: NSPoint(x: w - 60, y: h - 35), withAttributes: levelAttrs)
-
-        // Combo indicator
-        if comboCount >= 3 {
-            let comboStr = "🔥 \(comboCount)x COMBO!" as NSString
-            let comboAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.boldSystemFont(ofSize: 20),
-                .foregroundColor: NSColor(red: 1.0, green: 0.6, blue: 0.1, alpha: 1.0),
-            ]
-            let comboSize = comboStr.size(withAttributes: comboAttrs)
-            comboStr.draw(at: NSPoint(x: w / 2 - comboSize.width / 2, y: h - 70), withAttributes: comboAttrs)
+        // Lives — five vector hearts, centered
+        let heartSpacing: CGFloat = 17
+        let firstHeartX = w / 2 - heartSpacing * 2
+        for i in 0..<5 {
+            drawHeart(ctx: ctx,
+                      at: CGPoint(x: firstHeartX + CGFloat(i) * heartSpacing, y: panelRect.midY),
+                      size: 11,
+                      filled: i < lives)
         }
 
-        // Time of day indicator
+        // Level label (right) with a thin progress bar to the next level
+        let lvlStr = "LV \(level)" as NSString
+        let lvlAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold),
+            .foregroundColor: NSColor(red: 0.65, green: 1.0, blue: 0.65, alpha: 1.0),
+        ]
+        let lvlSize = lvlStr.size(withAttributes: lvlAttrs)
+        lvlStr.draw(at: NSPoint(x: panelRect.maxX - lvlSize.width - 12, y: panelRect.midY + 1),
+                    withAttributes: lvlAttrs)
+
+        let barW: CGFloat = 44
+        let barX = panelRect.maxX - barW - 12
+        let barY = panelRect.midY - 9
+        let progress = CGFloat(score % 10) / 10.0
+        ctx.setFillColor(NSColor(white: 1.0, alpha: 0.15).cgColor)
+        ctx.addPath(CGPath(roundedRect: CGRect(x: barX, y: barY, width: barW, height: 4),
+                           cornerWidth: 2, cornerHeight: 2, transform: nil))
+        ctx.fillPath()
+        if progress > 0 {
+            ctx.setFillColor(NSColor(red: 0.65, green: 1.0, blue: 0.65, alpha: 0.9).cgColor)
+            ctx.addPath(CGPath(roundedRect: CGRect(x: barX, y: barY, width: max(4, barW * progress), height: 4),
+                               cornerWidth: 2, cornerHeight: 2, transform: nil))
+            ctx.fillPath()
+        }
+
+        // Fever / combo indicator below the panel
+        if isFever {
+            let pulse = 0.75 + 0.25 * sin(CGFloat(frameCount) * 0.25)
+            let feverStr = "⚡ FEVER ×2" as NSString
+            let feverAttrs: [NSAttributedString.Key: Any] = [
+                .font: roundedFont(size: 18, weight: .heavy),
+                .foregroundColor: NSColor(red: 1.0, green: 0.8, blue: 0.1, alpha: pulse),
+            ]
+            let fs = feverStr.size(withAttributes: feverAttrs)
+            feverStr.draw(at: NSPoint(x: w / 2 - fs.width / 2, y: h - 72), withAttributes: feverAttrs)
+        } else if comboCount >= 3 {
+            let comboStr = "🔥 \(comboCount)×" as NSString
+            let comboAttrs: [NSAttributedString.Key: Any] = [
+                .font: roundedFont(size: 16, weight: .bold),
+                .foregroundColor: NSColor(red: 1.0, green: 0.6, blue: 0.1, alpha: 1.0),
+            ]
+            let cs = comboStr.size(withAttributes: comboAttrs)
+            comboStr.draw(at: NSPoint(x: w / 2 - cs.width / 2, y: h - 70), withAttributes: comboAttrs)
+        }
+
+        // Freeze countdown (left, under the panel)
+        if freezeFrames > 0 {
+            let secs = freezeFrames / 60 + 1
+            let frzStr = "❄️ \(secs)s" as NSString
+            frzStr.draw(at: NSPoint(x: 14, y: h - 70), withAttributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold),
+                .foregroundColor: NSColor(red: 0.7, green: 0.9, blue: 1.0, alpha: 0.95),
+            ])
+        }
+
+        // Time of day indicator (right, under the panel)
         let timeEmoji: String
         switch timeOfDay {
         case .morning: timeEmoji = "🌅"
@@ -1089,8 +1239,8 @@ final class GameView: NSView {
         case .evening: timeEmoji = "🌇"
         case .night: timeEmoji = "🌙"
         }
-        let timeAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14)]
-        (timeEmoji as NSString).draw(at: NSPoint(x: w - 28, y: h - 60), withAttributes: timeAttrs)
+        (timeEmoji as NSString).draw(at: NSPoint(x: w - 30, y: h - 70),
+                                     withAttributes: [.font: NSFont.systemFont(ofSize: 13)])
     }
 
     // MARK: - Start Screen
@@ -1105,7 +1255,7 @@ final class GameView: NSView {
         // Title
         let titleStr = L.shared.s("g_monkeys") as NSString
         let titleAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.boldSystemFont(ofSize: 32),
+            .font: roundedFont(size: 32, weight: .heavy),
             .foregroundColor: NSColor(red: 1.0, green: 0.9, blue: 0.3, alpha: 1.0),
         ]
         let titleSize = titleStr.size(withAttributes: titleAttrs)
@@ -1150,12 +1300,6 @@ final class GameView: NSView {
         let startSize = startStr.size(withAttributes: startAttrs)
         startStr.draw(at: NSPoint(x: w / 2 - startSize.width / 2, y: h / 2 - 80), withAttributes: startAttrs)
 
-        // Decorative bananas
-        let decoAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 30)]
-        ("🍌" as NSString).draw(at: NSPoint(x: 30, y: h / 2), withAttributes: decoAttrs)
-        ("🍌" as NSString).draw(at: NSPoint(x: w - 60, y: h / 2 + 30), withAttributes: decoAttrs)
-        ("🌴" as NSString).draw(at: NSPoint(x: 50, y: h / 2 + 90), withAttributes: decoAttrs)
-        ("🌴" as NSString).draw(at: NSPoint(x: w - 80, y: h / 2 + 80), withAttributes: decoAttrs)
     }
 
     // MARK: - Game Over Screen
@@ -1165,12 +1309,23 @@ final class GameView: NSView {
         ctx.setFillColor(NSColor(white: 0.0, alpha: 0.6).cgColor)
         ctx.fill(bounds)
 
+        // Rounded card behind the stats
+        let cardRect = CGRect(x: w / 2 - 155, y: h / 2 - 118, width: 310, height: 240)
+        let cardPath = CGPath(roundedRect: cardRect, cornerWidth: 16, cornerHeight: 16, transform: nil)
+        ctx.setFillColor(NSColor(white: 0.07, alpha: 0.72).cgColor)
+        ctx.addPath(cardPath)
+        ctx.fillPath()
+        ctx.setStrokeColor(NSColor(white: 1.0, alpha: 0.12).cgColor)
+        ctx.setLineWidth(1.0)
+        ctx.addPath(cardPath)
+        ctx.strokePath()
+
         // Game over title
         let isNewRecord = score >= highScore && score > 0
         let goTitle = isNewRecord ? L.shared.s("g_new_record") : L.shared.s("g_game_over")
         let goTitleStr = goTitle as NSString
         let goTitleAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.boldSystemFont(ofSize: 28),
+            .font: roundedFont(size: 28, weight: .heavy),
             .foregroundColor: isNewRecord ?
                 NSColor(red: 1.0, green: 0.85, blue: 0.1, alpha: 1.0) :
                 NSColor(red: 1.0, green: 0.4, blue: 0.4, alpha: 1.0),
