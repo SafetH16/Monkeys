@@ -782,10 +782,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.soundEngine.playSuccess(semitone: semitone)
             }
             speedTypeWindow?.speedTypeView.onStartMusic = { [weak self] in
-                self?.soundEngine.startMusic()
+                self?.soundEngine.startLayeredMusic()
             }
             speedTypeWindow?.speedTypeView.onStopMusic = { [weak self] in
-                self?.soundEngine.stopMusic()
+                self?.soundEngine.stopLayeredMusic()
+            }
+            speedTypeWindow?.speedTypeView.onFlowTierChanged = { [weak self] tier in
+                self?.soundEngine.setMusicIntensity(tier)
+            }
+            speedTypeWindow?.speedTypeView.weakKeyProvider = { [weak self] in
+                self?.typingStats.getKeyCounts() ?? [:]
             }
         }
 

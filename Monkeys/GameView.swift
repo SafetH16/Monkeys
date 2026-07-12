@@ -16,6 +16,7 @@ final class GameView: NSView {
         case golden   // ⭐ bonus: extra points + heals one life
         case bomb     // 💣 trap: typing it costs a life
         case ice      // ❄️ power-up: slows time for a few seconds
+        case word     // 🍌🍌 bunch: type the whole word to catch it
     }
 
     struct GameBanana {
@@ -25,6 +26,9 @@ final class GameView: NSView {
         let kind: BananaKind
         var wobblePhase: CGFloat
         var warned: Bool = false
+        /// Word-bunch payload: full word and letters already typed.
+        var word: String?
+        var typedCount: Int = 0
         let size: CGFloat = 40.0
     }
 
@@ -194,6 +198,22 @@ final class GameView: NSView {
 
     // Available letters
     private let availableLetters: [Character] = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+    /// Short jungle words for word-bunches (accent-free by design).
+    /// Non-latin locales fall back to English.
+    private static let wordBunchBank: [L.Lang: [String]] = [
+        .it: ["SOLE", "LUNA", "MARE", "RAMO", "NIDO", "VENTO", "CIELO", "SALTO", "PALMA", "MANGO", "LIANA", "COCCO"],
+        .en: ["SUN", "MOON", "TREE", "VINE", "LEAF", "PALM", "NEST", "WIND", "RAIN", "MANGO", "JUMP", "STAR"],
+        .es: ["SOL", "LUNA", "MAR", "RAMA", "NIDO", "PALMA", "MANGO", "CIELO", "SALTO", "COCO"],
+        .fr: ["LUNE", "MER", "NID", "VENT", "CIEL", "SAUT", "PALME", "COCO", "LIANE"],
+        .de: ["SONNE", "MOND", "BAUM", "NEST", "WIND", "PALME", "MANGO", "AST", "MEER"],
+        .pt: ["SOL", "LUA", "MAR", "NINHO", "PALMA", "MANGA", "VENTO", "SALTO", "COCO"],
+    ]
+
+    private func randomBunchWord() -> String {
+        let bank = Self.wordBunchBank[L.shared.current] ?? Self.wordBunchBank[.en] ?? ["MANGO"]
+        return bank.randomElement() ?? "MANGO"
+    }
 
     // MARK: - Init
 
@@ -573,6 +593,13 @@ final class GameView: NSView {
         } else {
             kind = .normal
         }
+        // Word bunch: from level 4, ~14% of spawns, never more than one
+        // falling at a time (keeps the matching unambiguous).
+        let hasWordBunch = bananas.contains { $0.kind == .word }
+        if level >= 4 && !hasWordBunch && kind == .normal && roll >= 0.16 && roll < 0.30 {
+            kind = .word
+        }
+
         // First-30s ramp: the first 3 bananas are always plain and gentle
         // (implicit tutorial), and one golden is guaranteed around second 13
         // so the player tastes the reward early and starts chasing it.
@@ -588,13 +615,27 @@ final class GameView: NSView {
         var speed = (1.5 + CGFloat(level - 1) * 0.18) * CGFloat.random(in: 0.85...1.15)
         if spawnCount <= 3 { speed *= 0.8 }
         if kind == .golden { speed *= 1.35 } // golden bananas are faster — worth the chase
+        if kind == .word { speed *= 0.62 }   // whole word to type: falls slower
+
+        var bunchWord: String?
+        var bunchChar = char
+        if kind == .word {
+            // Prefer a word whose first letter isn't already falling
+            var candidate = randomBunchWord()
+            for _ in 0..<4 where usedLetters.contains(candidate.first ?? " ") {
+                candidate = randomBunchWord()
+            }
+            bunchWord = candidate
+            bunchChar = candidate.first ?? "M"
+        }
 
         let banana = GameBanana(
-            character: char,
+            character: bunchChar,
             position: CGPoint(x: x, y: bounds.height - 20),
             speed: speed,
             kind: kind,
-            wobblePhase: CGFloat.random(in: 0...(.pi * 2))
+            wobblePhase: CGFloat.random(in: 0...(.pi * 2)),
+            word: bunchWord
         )
         bananas.append(banana)
     }
@@ -659,7 +700,24 @@ final class GameView: NSView {
         guard !isPaused else { return }
 
         let upper = Character(String(char).uppercased())
-        if let idx = bananas.firstIndex(where: { $0.character == upper }) {
+
+        // 1) A word bunch already in progress captures the input first
+        if let wIdx = bananas.firstIndex(where: { $0.kind == .word && $0.typedCount > 0 }) {
+            if let word = bananas[wIdx].word {
+                let letters = Array(word)
+                if bananas[wIdx].typedCount < letters.count && letters[bananas[wIdx].typedCount] == upper {
+                    advanceWordBunch(at: wIdx)
+                } else {
+                    // Wrong letter: the word resets, combo breaks
+                    bananas[wIdx].typedCount = 0
+                    comboCount = 0
+                    onPlayFailSound?()
+                }
+                return
+            }
+        }
+
+        if let idx = bananas.firstIndex(where: { $0.kind != .word && $0.character == upper }) {
             let banana = bananas[idx]
             let pos = banana.position
             bananas.remove(at: idx)
@@ -703,7 +761,7 @@ final class GameView: NSView {
                 popupText = "❄️"
                 freezeFrames = freezeDuration
                 onPlayGoldenSound?()
-            case .normal, .bomb:
+            case .normal, .bomb, .word:
                 points = multiplier * feverBonus
                 popupText = feverBonus > 1 ? "+\(points) ⚡" : (multiplier > 1 ? "+\(points) 🔥" : "+1")
             }
@@ -736,9 +794,55 @@ final class GameView: NSView {
                     onPlaySuccessSound?()
                 }
             }
+        } else if let wIdx = bananas.firstIndex(where: { $0.kind == .word && $0.word?.first == upper }) {
+            // 3) Start typing a word bunch
+            advanceWordBunch(at: wIdx)
         } else {
             comboCount = 0
             onPlayFailSound?()
+        }
+    }
+
+    /// Advances a word bunch by one letter; completes the catch when the
+    /// whole word has been typed.
+    private func advanceWordBunch(at index: Int) {
+        guard index < bananas.count, let word = bananas[index].word else { return }
+        bananas[index].typedCount += 1
+        comboCount += 1
+        onPlayTick?() // soft per-letter feedback
+
+        guard bananas[index].typedCount >= word.count else { return }
+
+        // Word complete: worth its length, with combo and fever multipliers
+        let banana = bananas[index]
+        let pos = banana.position
+        bananas.remove(at: index)
+
+        let multiplier = min(comboCount >= 3 ? comboCount - 1 : 1, 5)
+        let feverBonus = isFever ? 2 : 1
+        let points = word.count * max(1, multiplier) * feverBonus
+        score += points
+        hitStopFrames = 2
+
+        flyingCatches.append(FlyingCatch(from: pos, kind: .word, t: 0, popupText: "+\(points) 🍌"))
+        monkeyTargetX = pos.x
+        monkeyBounceFrames = 15
+        monkeyPose = .reach
+        poseFrames = 12
+        reachTarget = pos
+
+        let newLevel = (score / 10) + 1
+        if newLevel > level {
+            level = newLevel
+            bannerText = L.shared.sf("g_level_up", level)
+            bannerFrames = bannerTotalFrames
+            onPlayLevelUpSound?()
+        }
+
+        if comboCount >= 3 {
+            onPlayComboSound?(comboCount)
+        } else {
+            onPlaySuccessSound?()
         }
     }
 
@@ -1176,6 +1280,12 @@ final class GameView: NSView {
                 glowColor = NSColor(red: 0.5, green: 0.85, blue: 1.0, alpha: pulse)
                 ctx.setFillColor(glowColor.cgColor)
                 ctx.fillEllipse(in: CGRect(x: x - 22, y: y - 22, width: 44, height: 44))
+            case .word:
+                // Leafy green halo, pulsing faster as letters land
+                let pulse = 0.28 + 0.14 * sin(CGFloat(frameCount) * (0.1 + CGFloat(banana.typedCount) * 0.05))
+                glowColor = NSColor(red: 0.4, green: 0.95, blue: 0.45, alpha: pulse)
+                ctx.setFillColor(glowColor.cgColor)
+                ctx.fillEllipse(in: CGRect(x: x - 24, y: y - 24, width: 48, height: 48))
             case .normal:
                 switch timeOfDay {
                 case .morning, .afternoon:
@@ -1191,15 +1301,39 @@ final class GameView: NSView {
 
             // Falling item emoji
             let emoji: String
+            var emojiSize: CGFloat = 26
             switch banana.kind {
             case .normal: emoji = "🍌"
             case .golden: emoji = "🌟"
             case .bomb:   emoji = "💣"
             case .ice:    emoji = "❄️"
+            case .word:   emoji = "🍌"; emojiSize = 32
             }
             let bananaStr = emoji as NSString
-            let bananaAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 26)]
-            bananaStr.draw(at: NSPoint(x: x - 14, y: y - 14), withAttributes: bananaAttrs)
+            let bananaAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: emojiSize)]
+            bananaStr.draw(at: NSPoint(x: x - emojiSize / 2 + 2, y: y - emojiSize / 2 + 2), withAttributes: bananaAttrs)
+
+            // Word bunch: progress badge (typed part green, rest white)
+            if banana.kind == .word, let word = banana.word {
+                let typed = String(word.prefix(banana.typedCount)) as NSString
+                let rest = String(word.dropFirst(banana.typedCount)) as NSString
+                let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .bold)
+                let typedAttrs: [NSAttributedString.Key: Any] = [
+                    .font: font, .foregroundColor: NSColor(red: 0.35, green: 1.0, blue: 0.45, alpha: 1.0)]
+                let restAttrs: [NSAttributedString.Key: Any] = [
+                    .font: font, .foregroundColor: NSColor.white]
+                let typedW = typed.size(withAttributes: typedAttrs).width
+                let restW = rest.size(withAttributes: restAttrs).width
+                let totalW = typedW + restW
+                let badgeRect = CGRect(x: x - totalW / 2 - 6, y: y - 36, width: totalW + 12, height: 19)
+                let badgePath = CGPath(roundedRect: badgeRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
+                ctx.setFillColor(NSColor(red: 0.05, green: 0.25, blue: 0.08, alpha: 0.9).cgColor)
+                ctx.addPath(badgePath)
+                ctx.fillPath()
+                typed.draw(at: NSPoint(x: badgeRect.minX + 6, y: badgeRect.minY + 2), withAttributes: typedAttrs)
+                rest.draw(at: NSPoint(x: badgeRect.minX + 6 + typedW, y: badgeRect.minY + 2), withAttributes: restAttrs)
+                continue
+            }
 
             // Letter badge
             let letterStr = String(banana.character) as NSString
@@ -1215,7 +1349,7 @@ final class GameView: NSView {
             case .ice:
                 badgeColor = NSColor(red: 0.1, green: 0.3, blue: 0.5, alpha: 0.9)
                 letterColor = NSColor(red: 0.8, green: 0.95, blue: 1.0, alpha: 1.0)
-            case .normal:
+            case .normal, .word:
                 badgeColor = NSColor(red: 0.2, green: 0.2, blue: 0.2, alpha: 0.85)
                 letterColor = .white
             }

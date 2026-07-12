@@ -563,6 +563,13 @@ final class SoundEngine: @unchecked Sendable {
         defer { lock.unlock() }
         isMusicEnabled = enabled
         if !enabled {
+            for player in stemPlayers { player.setVolume(0, fadeDuration: 0.5) }
+            let players = stemPlayers
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                players.forEach { $0.stop() }
+            }
+            stemPlayers = []
+            layeredActive = false
             backgroundMusicPlayer?.setVolume(0.0, fadeDuration: 0.5)
             let generation = musicGeneration
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
@@ -651,6 +658,97 @@ final class SoundEngine: @unchecked Sendable {
         guard generation == musicGeneration,
               let player = backgroundMusicPlayer, player.isPlaying else { return }
         player.setVolume(Self.musicVolume, fadeDuration: 0.25)
+    }
+
+    // MARK: - Layered game music (flow-reactive)
+
+    private var stemPlayers: [AVAudioPlayer] = []
+    private var layeredActive = false
+
+    /// Renders (once) and returns the four stem files.
+    /// - Precondition: `lock` must be held by the caller.
+    private func stemURLs() -> [URL]? {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let urls = (0..<4).map { caches.appendingPathComponent("MonKeys_stem\($0).caf") }
+        let missing = urls.contains { !FileManager.default.fileExists(atPath: $0.path) }
+        if missing {
+            let stems = synthesizer.generateMusicStems()
+            guard stems.count == 4 else { return nil }
+            for (i, buffer) in stems.enumerated() {
+                guard let file = try? AVAudioFile(forWriting: urls[i], settings: buffer.format.settings),
+                      (try? file.write(from: buffer)) != nil else { return nil }
+            }
+        }
+        return urls
+    }
+
+    /// Starts the four stems in hardware-clock sync, base layer only.
+    /// The flow tier then fades the other stems in and out live.
+    func startLayeredMusic() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard isEnabled, isMusicEnabled else { return }
+
+        stopLayeredLocked()
+        backgroundMusicPlayer?.stop()
+        musicGeneration += 1
+
+        guard let urls = stemURLs() else { return }
+        var players: [AVAudioPlayer] = []
+        for url in urls {
+            guard let player = try? AVAudioPlayer(contentsOf: url) else { return }
+            player.numberOfLoops = -1
+            player.volume = 0.0
+            player.prepareToPlay()
+            players.append(player)
+        }
+        guard players.count == 4, let first = players.first else { return }
+        // Shared start time on the device clock keeps the stems sample-locked
+        let startAt = first.deviceCurrentTime + 0.12
+        for player in players { player.play(atTime: startAt) }
+        players[0].setVolume(Self.musicVolume, fadeDuration: 1.0)
+        stemPlayers = players
+        layeredActive = true
+    }
+
+    /// Flow tier → which stems are audible (0 base … 4 everything).
+    func setMusicIntensity(_ tier: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard layeredActive, stemPlayers.count == 4 else { return }
+        let gains: [Float]
+        switch tier {
+        case 0:  gains = [1.0, 0.0, 0.0, 0.0]
+        case 1:  gains = [1.0, 0.9, 0.0, 0.0]
+        case 2:  gains = [1.0, 1.0, 0.9, 0.0]
+        case 3:  gains = [1.0, 1.0, 1.0, 0.85]
+        default: gains = [1.0, 1.0, 1.0, 1.0]
+        }
+        for (i, player) in stemPlayers.enumerated() {
+            player.setVolume(Self.musicVolume * gains[i], fadeDuration: 0.4)
+        }
+    }
+
+    func stopLayeredMusic() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard layeredActive else { return }
+        for player in stemPlayers { player.setVolume(0, fadeDuration: 0.5) }
+        let players = stemPlayers
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            players.forEach { $0.stop() }
+        }
+        stemPlayers = []
+        layeredActive = false
+    }
+
+    /// - Precondition: `lock` must be held by the caller.
+    private func stopLayeredLocked() {
+        for player in stemPlayers { player.stop() }
+        stemPlayers = []
+        layeredActive = false
     }
 
     /// Pauses the music (keeps position) with a quick fade — used for in-game pause.

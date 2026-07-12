@@ -33,10 +33,12 @@ final class SpeedTypeView: NSView {
         case intermediate = 2
         case expert = 3
         case master = 4
+        case drill = 6         // words weighted toward your weakest keys
 
         var locKey: String {
             switch self {
             case .sprint: return "st_sprint"
+            case .drill: return "st_drill"
             case .beginner: return "st_beginner"
             case .intermediate: return "st_intermediate"
             case .expert: return "st_expert"
@@ -47,6 +49,7 @@ final class SpeedTypeView: NSView {
         var emoji: String {
             switch self {
             case .sprint: return "⚡"
+            case .drill: return "🎯"
             case .beginner: return "🌱"
             case .intermediate: return "🌿"
             case .expert: return "🌴"
@@ -57,6 +60,7 @@ final class SpeedTypeView: NSView {
         var color: NSColor {
             switch self {
             case .sprint: return NSColor(red: 0.4, green: 0.85, blue: 1.0, alpha: 1.0)
+            case .drill: return NSColor(red: 0.75, green: 0.55, blue: 1.0, alpha: 1.0)
             case .beginner: return NSColor(red: 0.4, green: 0.9, blue: 0.4, alpha: 1.0)
             case .intermediate: return NSColor(red: 1.0, green: 0.8, blue: 0.2, alpha: 1.0)
             case .expert: return NSColor(red: 1.0, green: 0.5, blue: 0.2, alpha: 1.0)
@@ -71,6 +75,7 @@ final class SpeedTypeView: NSView {
         var gameDuration: TimeInterval {
             switch self {
             case .sprint: return 15.0
+            case .drill: return 60.0
             case .beginner: return 60.0
             case .intermediate: return 60.0
             case .expert: return 60.0
@@ -477,6 +482,50 @@ final class SpeedTypeView: NSView {
     // White flash right after "GO!"
     private var goFlashFrames: Int = 0
 
+    // ── Weak-key drill ──
+    /// Injected by AppDelegate: all-time per-key counts from the local
+    /// heatmap. Used only in Drill mode, never leaves the process.
+    var weakKeyProvider: (() -> [Int64: Int])?
+    private var drillWords: [String] = []
+
+    private static let letterByKeyCode: [Int64: Character] = [
+        0: "a", 11: "b", 8: "c", 2: "d", 14: "e", 3: "f", 5: "g", 4: "h",
+        34: "i", 38: "j", 40: "k", 37: "l", 46: "m", 45: "n", 31: "o",
+        35: "p", 12: "q", 15: "r", 1: "s", 17: "t", 32: "u", 9: "v",
+        13: "w", 7: "x", 16: "y", 6: "z",
+    ]
+
+    /// Words containing your least-pressed letters get duplicated in the
+    /// pool proportionally to how many weak letters they contain.
+    private func computeDrillWords() -> [String] {
+        let counts = weakKeyProvider?() ?? [:]
+        var letterCounts: [Character: Int] = [:]
+        for (code, letter) in Self.letterByKeyCode {
+            letterCounts[letter] = counts[code] ?? 0
+        }
+        let weak = Set(letterCounts.sorted { $0.value < $1.value }.prefix(9).map { $0.key })
+        let banks = wordBanksForCurrentLanguage()
+        let pool = banks.beginner + banks.intermediate
+        var weighted: [String] = []
+        for word in pool {
+            let score = word.lowercased().reduce(0) { $0 + (weak.contains($1) ? 1 : 0) }
+            for _ in 0..<score { weighted.append(word) }
+        }
+        return weighted.isEmpty ? pool : weighted
+    }
+
+    /// Fires when the flow tier changes (drives the layered music).
+    var onFlowTierChanged: ((Int) -> Void)?
+    private var lastFlowTier: Int = 0
+
+    private func notifyFlowTier() {
+        let tier = flowTier
+        if tier != lastFlowTier {
+            lastFlowTier = tier
+            onFlowTierChanged?(tier)
+        }
+    }
+
     // Staggered results reveal
     private var resultsFrame: Int = 0
     private var earnedMedal: Medal = .none
@@ -560,6 +609,11 @@ final class SpeedTypeView: NSView {
 
     private func startPlaying() {
         phase = .playing
+        if selectedLevel == .drill {
+            drillWords = computeDrillWords()
+        }
+        lastFlowTier = 0
+        onFlowTierChanged?(0)
         gameDuration = selectedLevel.gameDuration
         timeRemaining = gameDuration
         startTime = Date()
@@ -584,6 +638,7 @@ final class SpeedTypeView: NSView {
         let pool: [String]
         switch selectedLevel {
         case .sprint:       pool = banks.intermediate
+        case .drill:        pool = drillWords.isEmpty ? banks.intermediate : drillWords
         case .beginner:     pool = banks.beginner
         case .intermediate: pool = banks.intermediate
         case .expert:       pool = banks.expert
@@ -820,6 +875,7 @@ final class SpeedTypeView: NSView {
             correctChars += 1
             combo += 1
             if combo > bestCombo { bestCombo = combo }
+            notifyFlowTier()
 
             // Word completed?
             if typedText.count == currentText.count {
@@ -844,6 +900,7 @@ final class SpeedTypeView: NSView {
         } else {
             wrongChars += 1
             combo = 0
+            notifyFlowTier()
             monkeyEmoji = "🙈"
             monkeyReactionFrames = 20
             onPlayFailSound?()

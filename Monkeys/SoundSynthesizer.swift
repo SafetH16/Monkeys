@@ -494,218 +494,206 @@ final class SoundSynthesizer: @unchecked Sendable {
         return buffer
     }
 
-    /// Generates a loopable upbeat background music buffer for the game.
-    /// Bright synth-pop groove: warm pads + bouncy bass + crisp drums, ~14 seconds.
+    /// Generates a loopable upbeat background music buffer for the game
+    /// (all stems mixed — used by the alternate-track rotation).
     func generateBackgroundMusic() -> AVAudioPCMBuffer? {
-        let sr = Float(Self.sampleRate)
-        let bpm: Float = 110.0  // Upbeat, energetic
-        let beat = 60.0 / bpm
-        let swing: Float = 0.10 // Light shuffle
+        let stems = generateMusicStems()
+        guard stems.count == 4, let first = stems.first else { return nil }
+        let frameCount = first.frameLength
+        guard let mix = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return nil }
+        mix.frameLength = frameCount
+        guard let out = mix.floatChannelData?[0] else { return nil }
+        for i in 0..<Int(frameCount) { out[i] = 0 }
+        for stem in stems {
+            guard let src = stem.floatChannelData?[0] else { continue }
+            for i in 0..<Int(min(frameCount, stem.frameLength)) { out[i] += src[i] }
+        }
+        for i in 0..<Int(frameCount) { out[i] = tanh(out[i] * 1.6) * 0.55 }
+        return mix
+    }
 
-        // ─── CHORDS: Bright synth pad (major voicings, high register) ───
-        // Progression: C → F → Am → G (pop/bright, mostly major feel)
-        // Repeated twice = 8 bars = 32 beats
+    /// Renders the game groove as four loop-synced stems so the engine can
+    /// layer them live with the player's flow:
+    ///   0 = pads + bass (base)   1 = hi-hats   2 = kick + clap   3 = arp
+    /// All four buffers have identical length and loop points.
+    func generateMusicStems() -> [AVAudioPCMBuffer] {
+        let sr = Float(Self.sampleRate)
+        let bpm: Float = 110.0
+        let beat = 60.0 / bpm
+        let swing: Float = 0.10
+
         struct Chord {
             let freqs: [Float]
             let beats: Float
         }
         let chords: [Chord] = [
-            // Section A
-            Chord(freqs: [523.25, 659.25, 783.99], beats: 4),  // C5 E5 G5 (C major)
-            Chord(freqs: [349.23, 523.25, 698.46], beats: 4),  // F4 C5 F5 (F major)
-            Chord(freqs: [440.00, 523.25, 659.25], beats: 4),  // A4 C5 E5 (Am → but bright voicing)
-            Chord(freqs: [392.00, 493.88, 587.33], beats: 4),  // G4 B4 D5 (G major)
-            // Section B (variation)
-            Chord(freqs: [523.25, 659.25, 783.99], beats: 4),  // C major
-            Chord(freqs: [349.23, 440.00, 523.25], beats: 4),  // F major (diff voicing)
-            Chord(freqs: [493.88, 587.33, 783.99], beats: 4),  // G/B (bright sus feel)
-            Chord(freqs: [523.25, 659.25, 783.99], beats: 4),  // C major (resolve)
+            Chord(freqs: [523.25, 659.25, 783.99], beats: 4),  // C
+            Chord(freqs: [349.23, 523.25, 698.46], beats: 4),  // F
+            Chord(freqs: [440.00, 523.25, 659.25], beats: 4),  // Am
+            Chord(freqs: [392.00, 493.88, 587.33], beats: 4),  // G
+            Chord(freqs: [523.25, 659.25, 783.99], beats: 4),  // C
+            Chord(freqs: [349.23, 440.00, 523.25], beats: 4),  // F
+            Chord(freqs: [493.88, 587.33, 783.99], beats: 4),  // G/B
+            Chord(freqs: [523.25, 659.25, 783.99], beats: 4),  // C
         ]
 
-        // ─── BASS: Clean, bouncy mid-range ───
         let bassNotes: [(freq: Float, beats: Float)] = [
-            // Section A
-            (130.81, 1.5), (130.81, 0.5), (196.00, 1.0), (130.81, 1.0), // C
-            (174.61, 1.5), (174.61, 0.5), (130.81, 1.0), (174.61, 1.0), // F
-            (110.00, 1.5), (110.00, 0.5), (130.81, 1.0), (164.81, 1.0), // A
-            (98.00,  1.5), (98.00,  0.5), (130.81, 1.0), (98.00,  1.0), // G
-            // Section B
-            (130.81, 1.5), (130.81, 0.5), (164.81, 1.0), (196.00, 1.0), // C
-            (174.61, 1.5), (174.61, 0.5), (130.81, 1.0), (174.61, 1.0), // F
-            (98.00,  1.5), (98.00,  0.5), (123.47, 1.0), (98.00,  1.0), // G
-            (130.81, 2.0), (130.81, 1.0), (196.00, 1.0),                 // C (resolve)
-        ]
-
-        // ─── DRUMS: Clean, modern kit ───
-        let drumBar: [(beat: Float, type: Int, vel: Float)] = [
-            (0.00, 0, 0.9),                    // Kick on 1
-            (0.50, 2, 0.5),                    // Hi-hat
-            (1.00, 1, 0.8),                    // Clap on 2
-            (1.00, 2, 0.4),                    // Hat
-            (1.50, 2, 0.5),                    // Hat
-            (2.00, 0, 0.7),                    // Kick on 3
-            (2.50, 2, 0.5),                    // Hat
-            (2.75, 0, 0.4),                    // Ghost kick
-            (3.00, 1, 0.85),                   // Clap on 4
-            (3.00, 2, 0.4),                    // Hat
-            (3.50, 2, 0.45),                   // Hat
+            (130.81, 1.5), (130.81, 0.5), (196.00, 1.0), (130.81, 1.0),
+            (174.61, 1.5), (174.61, 0.5), (130.81, 1.0), (174.61, 1.0),
+            (110.00, 1.5), (110.00, 0.5), (130.81, 1.0), (164.81, 1.0),
+            (98.00,  1.5), (98.00,  0.5), (130.81, 1.0), (98.00,  1.0),
+            (130.81, 1.5), (130.81, 0.5), (164.81, 1.0), (196.00, 1.0),
+            (174.61, 1.5), (174.61, 0.5), (130.81, 1.0), (174.61, 1.0),
+            (98.00,  1.5), (98.00,  0.5), (123.47, 1.0), (98.00,  1.0),
+            (130.81, 2.0), (130.81, 1.0), (196.00, 1.0),
         ]
 
         var totalBeats: Float = 0
         for c in chords { totalBeats += c.beats }
         let totalDur = totalBeats * beat
         let frameCount = AVAudioFrameCount(totalDur * sr)
+        let n = Int(frameCount)
 
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-            return nil
-        }
-        buffer.frameLength = frameCount
-        guard let samples = buffer.floatChannelData?[0] else { return nil }
-        for i in 0..<Int(frameCount) { samples[i] = 0 }
+        var base = [Float](repeating: 0, count: n)
+        var hats = [Float](repeating: 0, count: n)
+        var drums = [Float](repeating: 0, count: n)
+        var arp = [Float](repeating: 0, count: n)
 
-        // ════════════════════════════════════════════
-        // RENDER CHORDS (bright, warm synth pad)
-        // ════════════════════════════════════════════
+        // ── STEM 0: pads ──
         var chordTime: Float = 0
         for chord in chords {
             let chordDur = chord.beats * beat
             let startSmp = Int(chordTime * sr)
-            let endSmp = min(Int((chordTime + chordDur) * sr), Int(frameCount))
-
+            let endSmp = min(Int((chordTime + chordDur) * sr), n)
             for i in startSmp..<endSmp {
                 let t = Float(i - startSmp) / sr
-                // Smooth envelope: soft attack, sustained, gentle release
                 let attack = min(t / 0.08, 1.0)
                 let release = t > (chordDur - 0.15) ? max(0, (chordDur - t) / 0.15) : 1.0
                 let env: Float = 0.04 * attack * release
-
                 var sample: Float = 0
                 for (vi, freq) in chord.freqs.enumerated() {
-                    // Slight detune for warmth (chorus effect)
                     let detune: Float = 1.0 + Float(vi) * 0.0012
-                    let f = freq * detune
-                    // Gentle vibrato
                     let vib = 1.0 + 0.0015 * sinf(Self.twoPi * 5.0 * t + Float(vi) * 1.5)
-                    let fv = f * vib
-
-                    // Bright pad: sine + soft square-ish harmonic
-                    let sine = sinf(Self.twoPi * fv * t)
-                    let h2 = sinf(Self.twoPi * fv * 2.0 * t) * 0.15
-                    let h3 = sinf(Self.twoPi * fv * 3.0 * t) * 0.05
-                    sample += (sine + h2 + h3)
+                    let fv = freq * detune * vib
+                    sample += sinf(Self.twoPi * fv * t)
+                        + 0.15 * sinf(Self.twoPi * fv * 2.0 * t)
+                        + 0.05 * sinf(Self.twoPi * fv * 3.0 * t)
                 }
-                samples[i] += sample * env
+                base[i] += sample * env
             }
             chordTime += chordDur
         }
 
-        // ════════════════════════════════════════════
-        // RENDER BASS (clean, bouncy)
-        // ════════════════════════════════════════════
+        // ── STEM 0: bass ──
         var bassTime: Float = 0
         var prevBassFreq: Float = 130.81
         for bassNote in bassNotes {
             let noteDur = bassNote.beats * beat
-            let humanize = Float.random(in: -0.006...0.006)
-            let noteStart = max(0, bassTime + humanize)
-            let startSmp = Int(noteStart * sr)
-            let endSmp = min(Int((noteStart + noteDur) * sr), Int(frameCount))
-
+            let startSmp = Int(max(0, bassTime) * sr)
+            let endSmp = min(Int((bassTime + noteDur) * sr), n)
             for i in startSmp..<endSmp {
                 let t = Float(i - startSmp) / sr
-                // Quick portamento glide (30ms)
                 let glide = min(t / 0.03, 1.0)
                 let smooth = glide * glide * (3.0 - 2.0 * glide)
                 let freq = prevBassFreq + (bassNote.freq - prevBassFreq) * smooth
-
-                // Punchy envelope: fast attack, sustained
                 let attack = min(t / 0.008, 1.0)
                 let sustain = 0.7 + 0.3 * expf(-t / (noteDur * 0.5))
                 let release = t > (noteDur - 0.02) ? max(0, (noteDur - t) / 0.02) : 1.0
                 let env: Float = 0.08 * attack * sustain * release
-
-                // Clean bass: fundamental + subtle octave
-                let sine = sinf(Self.twoPi * freq * t)
-                let octave = sinf(Self.twoPi * freq * 2.0 * t) * 0.12
-                samples[i] += (sine + octave) * env
+                base[i] += (sinf(Self.twoPi * freq * t) + 0.12 * sinf(Self.twoPi * freq * 2.0 * t)) * env
             }
             prevBassFreq = bassNote.freq
             bassTime += noteDur
         }
 
-        // ════════════════════════════════════════════
-        // RENDER DRUMS (crisp, modern)
-        // ════════════════════════════════════════════
+        // ── STEMS 1+2: drums (hats separate from kick/clap) ──
+        let drumBar: [(beat: Float, type: Int, vel: Float)] = [
+            (0.00, 0, 0.9), (0.50, 2, 0.5), (1.00, 1, 0.8), (1.00, 2, 0.4),
+            (1.50, 2, 0.5), (2.00, 0, 0.7), (2.50, 2, 0.5), (2.75, 0, 0.4),
+            (3.00, 1, 0.85), (3.00, 2, 0.4), (3.50, 2, 0.45),
+        ]
         for bar in 0..<8 {
             let barOffset = Float(bar) * 4.0 * beat
             for hit in drumBar {
                 let isOffBeat = hit.beat.truncatingRemainder(dividingBy: 1.0) > 0.4
                 let swingDelay = isOffBeat ? beat * swing : 0.0
-                let humanize = Float.random(in: -0.004...0.004)
-                let hitTime = barOffset + hit.beat * beat + swingDelay + humanize
+                let hitTime = barOffset + hit.beat * beat + swingDelay
                 let startSmp = Int(max(0, hitTime) * sr)
-                let vel = hit.vel * Float.random(in: 0.85...1.0)
+                let vel = hit.vel
 
                 switch hit.type {
-                case 0: // Kick: punchy, clean
-                    let dur: Float = 0.10
-                    let endSmp = min(startSmp + Int(dur * sr), Int(frameCount))
+                case 0: // Kick → drums stem
+                    let endSmp = min(startSmp + Int(0.10 * sr), n)
                     for i in startSmp..<endSmp {
                         let t = Float(i - startSmp) / sr
                         let env = vel * 0.14 * expf(-t / 0.035)
-                        // Clean pitch drop: 160Hz → 55Hz
                         let freq = 55.0 + 105.0 * expf(-t / 0.015)
-                        samples[i] += sinf(Self.twoPi * freq * t) * env
+                        drums[i] += sinf(Self.twoPi * freq * t) * env
                     }
-
-                case 1: // Clap: bright, snappy
-                    let dur: Float = 0.08
-                    let endSmp = min(startSmp + Int(dur * sr), Int(frameCount))
+                case 1: // Clap → drums stem
+                    let endSmp = min(startSmp + Int(0.08 * sr), n)
                     for i in startSmp..<endSmp {
                         let t = Float(i - startSmp) / sr
                         let env = vel * 0.06 * expf(-t / 0.025)
-                        // Noise burst (bright)
                         let noise = Float.random(in: -1.0...1.0)
-                        // Body tone
                         let body = sinf(Self.twoPi * 220.0 * t) * 0.3
-                        samples[i] += (noise * 0.7 + body) * env
+                        drums[i] += (noise * 0.7 + body) * env
                     }
-
-                default: // Hi-hat: crisp, bright
-                    let dur: Float = 0.035
-                    let endSmp = min(startSmp + Int(dur * sr), Int(frameCount))
+                default: // Hi-hat → hats stem
+                    let endSmp = min(startSmp + Int(0.035 * sr), n)
                     for i in startSmp..<endSmp {
                         let t = Float(i - startSmp) / sr
                         let env = vel * 0.035 * expf(-t / 0.010)
                         let noise = Float.random(in: -1.0...1.0)
-                        // Bright metallic shimmer
-                        let metal = sinf(Self.twoPi * 8400.0 * t) * 0.2 +
-                                    sinf(Self.twoPi * 12000.0 * t) * 0.1
-                        samples[i] += (noise * 0.6 + metal) * env
+                        let metal = sinf(Self.twoPi * 8400.0 * t) * 0.2 + sinf(Self.twoPi * 12000.0 * t) * 0.1
+                        hats[i] += (noise * 0.6 + metal) * env
                     }
                 }
             }
         }
 
-        // ════════════════════════════════════════════
-        // MASTER: Gentle soft-clip (no dark low-pass!)
-        // ════════════════════════════════════════════
-        for i in 0..<Int(frameCount) {
-            samples[i] = tanh(samples[i] * 2.0) * 0.5
-        }
-
-        // ─── Crossfade for seamless looping ───
-        let fadeLen = Int(Float(frameCount) * 0.05)
-        if fadeLen > 0 {
-            for i in 0..<fadeLen {
-                let ratio = Float(i) / Float(fadeLen)
-                let tail = Int(frameCount) - fadeLen + i
-                if tail < Int(frameCount) {
-                    samples[tail] = samples[tail] * (1.0 - ratio) + samples[i] * ratio
+        // ── STEM 3: arp — eighth-note chord tones one octave up ──
+        chordTime = 0
+        for chord in chords {
+            let chordDur = chord.beats * beat
+            let steps = Int(chord.beats * 2) // eighth notes
+            for step in 0..<steps {
+                let noteStart = chordTime + Float(step) * beat / 2
+                let noteFreq = chord.freqs[step % chord.freqs.count] * 2.0
+                let startSmp = Int(noteStart * sr)
+                let endSmp = min(startSmp + Int(0.14 * sr), n)
+                guard startSmp < n else { continue }
+                for i in startSmp..<endSmp {
+                    let t = Float(i - startSmp) / sr
+                    let attack = min(t / 0.004, 1.0)
+                    let env = 0.045 * attack * expf(-t / 0.07)
+                    // Pluck-ish: sine + a touch of 2nd harmonic
+                    arp[i] += (sinf(Self.twoPi * noteFreq * t)
+                               + 0.25 * sinf(Self.twoPi * noteFreq * 2.0 * t)) * env
                 }
             }
+            chordTime += chordDur
         }
 
-        return buffer
+        // ── Pack stems into buffers: soft-clip + loop crossfade each ──
+        var result: [AVAudioPCMBuffer] = []
+        for source in [base, hats, drums, arp] {
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { continue }
+            buffer.frameLength = frameCount
+            guard let out = buffer.floatChannelData?[0] else { continue }
+            var data = source
+            for i in 0..<n { data[i] = tanh(data[i] * 2.0) * 0.5 }
+            let fadeLen = Int(Float(n) * 0.05)
+            if fadeLen > 0 {
+                for i in 0..<fadeLen {
+                    let ratio = Float(i) / Float(fadeLen)
+                    let tail = n - fadeLen + i
+                    data[tail] = data[tail] * (1.0 - ratio) + data[i] * ratio
+                }
+            }
+            for i in 0..<n { out[i] = data[i] }
+            result.append(buffer)
+        }
+        return result
     }
 }

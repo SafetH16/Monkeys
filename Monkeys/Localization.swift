@@ -453,6 +453,22 @@ final class L: @unchecked Sendable {
                 .zh: "15秒一口气 — 立即重来",
                 .ko: "15초 한 호흡 — 바로 재시작",
             ],
+            "st_drill": [
+                .en: "Weak Keys", .it: "Tasti Deboli", .es: "Teclas Débiles",
+                .fr: "Touches Faibles", .de: "Schwache Tasten", .pt: "Teclas Fracas",
+                .ja: "苦手キー", .zh: "薄弱按键", .ko: "약한 키",
+            ],
+            "st_desc_6": [
+                .en: "Words picked from YOUR least-trained letters",
+                .it: "Parole scelte dalle TUE lettere meno allenate",
+                .es: "Palabras con TUS letras menos entrenadas",
+                .fr: "Des mots avec TES lettres les moins entraînées",
+                .de: "Wörter aus DEINEN am wenigsten geübten Buchstaben",
+                .pt: "Palavras com as SUAS letras menos treinadas",
+                .ja: "あなたの苦手な文字から出題",
+                .zh: "从你最少用的字母中选词",
+                .ko: "가장 덜 연습한 글자로 단어 구성",
+            ],
             "mi_golden": [
                 .en: "Catch %d golden bananas",
                 .it: "Prendi %d banane dorate",
