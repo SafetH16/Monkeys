@@ -28,6 +28,7 @@ final class SpeedTypeView: NSView {
     }
 
     enum DifficultyLevel: Int, CaseIterable {
+        case sprint = 5        // 15 seconds, one breath — the menu-bar snack
         case beginner = 1
         case intermediate = 2
         case expert = 3
@@ -35,6 +36,7 @@ final class SpeedTypeView: NSView {
 
         var locKey: String {
             switch self {
+            case .sprint: return "st_sprint"
             case .beginner: return "st_beginner"
             case .intermediate: return "st_intermediate"
             case .expert: return "st_expert"
@@ -44,6 +46,7 @@ final class SpeedTypeView: NSView {
 
         var emoji: String {
             switch self {
+            case .sprint: return "⚡"
             case .beginner: return "🌱"
             case .intermediate: return "🌿"
             case .expert: return "🌴"
@@ -53,6 +56,7 @@ final class SpeedTypeView: NSView {
 
         var color: NSColor {
             switch self {
+            case .sprint: return NSColor(red: 0.4, green: 0.85, blue: 1.0, alpha: 1.0)
             case .beginner: return NSColor(red: 0.4, green: 0.9, blue: 0.4, alpha: 1.0)
             case .intermediate: return NSColor(red: 1.0, green: 0.8, blue: 0.2, alpha: 1.0)
             case .expert: return NSColor(red: 1.0, green: 0.5, blue: 0.2, alpha: 1.0)
@@ -66,12 +70,16 @@ final class SpeedTypeView: NSView {
 
         var gameDuration: TimeInterval {
             switch self {
+            case .sprint: return 15.0
             case .beginner: return 60.0
             case .intermediate: return 60.0
             case .expert: return 60.0
             case .master: return 90.0
             }
         }
+
+        /// GameProgress medal mode key.
+        var medalMode: String { self == .sprint ? "speed_sprint" : "speed" }
     }
 
     // MARK: - Callbacks
@@ -85,6 +93,8 @@ final class SpeedTypeView: NSView {
     var onPlayCountdownTick: (() -> Void)?
     var onPlayCountdownGo: (() -> Void)?
     var onPlayRecordSound: (() -> Void)?
+    /// Success chime pitched by the flow tier (semitones up).
+    var onPlaySuccessSemitone: ((Int) -> Void)?
 
     // MARK: - Word Banks (Beginner: single words)
 
@@ -153,6 +163,12 @@ final class SpeedTypeView: NSView {
         "salta in alto", "ride contenta", "cerca il cibo",
         "balla con gioia", "guarda il cielo", "nuota nel fiume",
         "scala la montagna", "trova il tesoro", "suona il tamburo",
+        "dorme sul ramo", "sbuccia la banana", "chiama gli amici",
+        "attraversa il fiume", "raccoglie i frutti", "salta la liana",
+        "si nasconde bene", "corre nel bosco", "ride di gusto",
+        "vola tra i rami", "beve alla fonte", "gioca a nascondino",
+        "insegue la farfalla", "ascolta il vento", "osserva le stelle",
+        "costruisce il nido", "difende il territorio", "esplora la valle",
     ]
 
     private let englishIntermediate: [String] = [
@@ -161,7 +177,13 @@ final class SpeedTypeView: NSView {
         "under the palm", "between leaves", "plays happy",
         "jumps high", "laughing loud", "looking for food",
         "dancing with joy", "watching the sky", "swimming in river",
-        "climbing the mountain",
+        "climbing the mountain", "sleeping on the branch", "peeling a banana",
+        "calling the friends", "crossing the river", "picking the fruits",
+        "grabbing the vine", "hiding really well", "running in the woods",
+        "laughing out loud", "flying between trees", "drinking from the spring",
+        "playing hide and seek", "chasing the butterfly", "listening to the wind",
+        "watching the stars", "building the nest", "guarding the territory",
+        "exploring the valley", "sharing the mango", "waking up early",
     ]
 
     private let spanishIntermediate: [String] = [
@@ -169,6 +191,10 @@ final class SpeedTypeView: NSView {
         "sobre la rama", "come la fruta", "corre r\u{00E1}pido",
         "bajo la palma", "entre las hojas", "juega feliz",
         "salta alto", "busca comida", "baila contento",
+        "duerme en la rama", "pela la banana", "llama a sus amigos",
+        "cruza el r\u{00ED}o", "recoge la fruta", "corre en el bosque",
+        "r\u{00ED}e con ganas", "mira las estrellas", "explora el valle",
+        "construye el nido", "escucha el viento", "comparte el mango",
     ]
 
     private let frenchIntermediate: [String] = [
@@ -176,6 +202,10 @@ final class SpeedTypeView: NSView {
         "sur la branche", "mange le fruit", "court vite",
         "sous le palmier", "entre les feuilles", "joue content",
         "saute haut", "cherche la nourriture", "danse joyeux",
+        "dort sur la branche", "\u{00E9}pluche la banane", "appelle ses amis",
+        "traverse la rivi\u{00E8}re", "cueille les fruits", "court dans les bois",
+        "rit aux \u{00E9}clats", "regarde les \u{00E9}toiles", "explore la vall\u{00E9}e",
+        "construit le nid", "\u{00E9}coute le vent", "partage la mangue",
     ]
 
     private let germanIntermediate: [String] = [
@@ -183,6 +213,10 @@ final class SpeedTypeView: NSView {
         "auf dem Ast", "isst die Frucht", "rennt schnell",
         "unter der Palme", "zwischen Bl\u{00E4}ttern", "spielt fr\u{00F6}hlich",
         "springt hoch", "sucht Nahrung", "tanzt lustig",
+        "schl\u{00E4}ft auf dem Ast", "sch\u{00E4}lt die Banane", "ruft die Freunde",
+        "\u{00FC}berquert den Fluss", "pfl\u{00FC}ckt die Fr\u{00FC}chte", "rennt durch den Wald",
+        "lacht sehr laut", "schaut die Sterne", "erkundet das Tal",
+        "baut das Nest", "h\u{00F6}rt den Wind", "teilt die Mango",
     ]
 
     private let portugueseIntermediate: [String] = [
@@ -190,6 +224,10 @@ final class SpeedTypeView: NSView {
         "sobre o galho", "come a fruta", "corre r\u{00E1}pido",
         "sob a palma", "entre as folhas", "brinca feliz",
         "pula alto", "procura comida", "danca contente",
+        "dorme no galho", "descasca a banana", "chama os amigos",
+        "atravessa o rio", "colhe as frutas", "corre na floresta",
+        "ri com vontade", "olha as estrelas", "explora o vale",
+        "constr\u{00F3}i o ninho", "escuta o vento", "divide a manga",
     ]
 
     // MARK: - Word Banks (Expert: full sentences)
@@ -413,6 +451,37 @@ final class SpeedTypeView: NSView {
     // Green flash on the text panel when a phrase is completed
     private var wordFlashFrames: Int = 0
 
+    // Anti-repeat window for the word banks
+    private var recentTexts: [String] = []
+
+    // Flow tiers (consecutive correct characters): 0 none, 1 bronze,
+    // 2 silver, 3 gold, 4 plasma. Feeds the border tint and the chime pitch.
+    private var flowTier: Int {
+        if combo >= 70 { return 4 }
+        if combo >= 45 { return 3 }
+        if combo >= 25 { return 2 }
+        if combo >= 10 { return 1 }
+        return 0
+    }
+
+    private func tierColor(_ tier: Int) -> NSColor {
+        switch tier {
+        case 1: return NSColor(red: 0.80, green: 0.52, blue: 0.28, alpha: 1.0) // bronze
+        case 2: return NSColor(red: 0.75, green: 0.78, blue: 0.83, alpha: 1.0) // silver
+        case 3: return NSColor(red: 1.00, green: 0.80, blue: 0.20, alpha: 1.0) // gold
+        case 4: return NSColor(red: 0.45, green: 0.90, blue: 1.00, alpha: 1.0) // plasma
+        default: return NSColor(white: 0.4, alpha: 1.0)
+        }
+    }
+
+    // White flash right after "GO!"
+    private var goFlashFrames: Int = 0
+
+    // Staggered results reveal
+    private var resultsFrame: Int = 0
+    private var earnedMedal: Medal = .none
+    private var earnedMedalIsNew: Bool = false
+
     // MARK: - Init
 
     override init(frame: NSRect) {
@@ -456,6 +525,10 @@ final class SpeedTypeView: NSView {
         wpmHistory = []
         finishedAsRecord = false
         confetti.removeAll()
+        resultsFrame = 0
+        goFlashFrames = 0
+        earnedMedal = .none
+        earnedMedalIsNew = false
         loadHighScore()
         pickNewText()
 
@@ -508,12 +581,20 @@ final class SpeedTypeView: NSView {
 
     private func randomText() -> String {
         let banks = wordBanksForCurrentLanguage()
+        let pool: [String]
         switch selectedLevel {
-        case .beginner:     return banks.beginner.randomElement()!
-        case .intermediate: return banks.intermediate.randomElement()!
-        case .expert:       return banks.expert.randomElement()!
-        case .master:       return banks.master.randomElement()!
+        case .sprint:       pool = banks.intermediate
+        case .beginner:     pool = banks.beginner
+        case .intermediate: pool = banks.intermediate
+        case .expert:       pool = banks.expert
+        case .master:       pool = banks.master
         }
+        // Anti-repeat window: never serve a recently seen text
+        let fresh = pool.filter { !recentTexts.contains($0) }
+        let picked = (fresh.isEmpty ? pool : fresh).randomElement() ?? "banana"
+        recentTexts.append(picked)
+        if recentTexts.count > 6 { recentTexts.removeFirst() }
+        return picked
     }
 
     private func pickNewText() {
@@ -563,7 +644,17 @@ final class SpeedTypeView: NSView {
                 onPlayCountdownTick?()
             } else if countdownFrames <= 0 {
                 onPlayCountdownGo?()
+                goFlashFrames = 8
                 startPlaying()
+            }
+        }
+        if goFlashFrames > 0 { goFlashFrames -= 1 }
+
+        // Staggered results reveal, one tick per landing element
+        if phase == .finished {
+            resultsFrame += 1
+            if [1, 12, 40, 55, 70, 85].contains(resultsFrame) {
+                onPlayCountdownTick?()
             }
         }
 
@@ -598,10 +689,17 @@ final class SpeedTypeView: NSView {
 
     private func endGame() {
         phase = .finished
+        resultsFrame = 0
         onStopMusic?()
         let wpm = calculateWPM()
         finalWPM = wpm
         wpmHistory.append(wpm)
+
+        // Medal + daily mission + streak
+        let result = GameProgress.shared.recordRun(mode: selectedLevel.medalMode, score: wpm)
+        earnedMedal = result.medal
+        earnedMedalIsNew = result.isNewBest
+        GameProgress.shared.registerWPM(wpm)
 
         // Keep the last 5 runs for this difficulty
         let historyKey = "MonkeysSpeedHistory_\(selectedLevel.rawValue)"
@@ -612,6 +710,8 @@ final class SpeedTypeView: NSView {
         if wpm > highScoreWPM && wpm > 0 {
             highScoreWPM = wpm
             UserDefaults.standard.set(highScoreWPM, forKey: selectedLevel.highScoreKey)
+            // Persist this run's curve: it becomes the ghost to race next time
+            UserDefaults.standard.set(wpmHistory, forKey: "MonkeysBestCurve_\(selectedLevel.rawValue)")
             finishedAsRecord = true
             spawnConfetti()
             onPlayRecordSound?()
@@ -673,7 +773,7 @@ final class SpeedTypeView: NSView {
     func handleKeyTyped(_ char: Character) {
         if phase == .waiting {
             // Number keys 1-4 to select level directly
-            if let num = char.wholeNumberValue, num >= 1 && num <= 4 {
+            if let num = char.wholeNumberValue, num >= 1 && num <= DifficultyLevel.allCases.count {
                 selectedLevelIndex = num - 1
                 selectedLevel = DifficultyLevel.allCases[selectedLevelIndex]
                 loadHighScore()
@@ -692,7 +792,7 @@ final class SpeedTypeView: NSView {
         }
 
         if phase == .finished {
-            resetGame()
+            if resultsFrame >= 60 { resetGame() }
             return
         }
 
@@ -725,7 +825,11 @@ final class SpeedTypeView: NSView {
             if typedText.count == currentText.count {
                 wordsCompleted += 1
                 wordFlashFrames = 18
-                onPlaySuccessSound?()
+                if let pitched = onPlaySuccessSemitone {
+                    pitched(flowTier * 3)
+                } else {
+                    onPlaySuccessSound?()
+                }
 
                 if combo >= 5 {
                     onPlayComboSound?(combo)
@@ -757,7 +861,7 @@ final class SpeedTypeView: NSView {
         let cardHeight: CGFloat = 56
         let cardSpacing: CGFloat = 8
         let totalCardsHeight = CGFloat(DifficultyLevel.allCases.count) * (cardHeight + cardSpacing)
-        let startY = h / 2 + totalCardsHeight / 2 - 30
+        let startY = h / 2 + totalCardsHeight / 2 - 46
         let cardY = startY - CGFloat(index) * (cardHeight + cardSpacing)
         return CGRect(x: 30, y: cardY, width: cardWidth, height: cardHeight)
     }
@@ -815,7 +919,7 @@ final class SpeedTypeView: NSView {
                 }
             }
         case .finished:
-            resetGame()
+            if resultsFrame >= 60 { resetGame() }
         case .countdown, .playing:
             break
         }
@@ -857,7 +961,8 @@ final class SpeedTypeView: NSView {
         // Big countdown number with a pop-in scale each second
         let secondsLeft = (max(countdownFrames, 1) - 1) / 60 + 1
         let frameInSecond = (max(countdownFrames, 1) - 1) % 60
-        let popScale = 1.0 + 0.5 * (CGFloat(frameInSecond) / 60.0)
+        let frac = CGFloat(frameInSecond) / 60.0
+        let popScale = 1.0 + 0.85 * frac * frac // punch-in, eases hard
         let numberSize = 72.0 * popScale
         let alpha = 0.4 + 0.6 * (CGFloat(frameInSecond) / 60.0)
 
@@ -911,25 +1016,17 @@ final class SpeedTypeView: NSView {
     // MARK: - Start Screen (Level Selection)
 
     private func drawStartScreen(ctx: CGContext, w: CGFloat, h: CGFloat) {
-        // Big monkey
-        let monkeyStr = "🐵" as NSString
-        let monkeyAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 55)]
-        let ms = monkeyStr.size(withAttributes: monkeyAttrs)
-        monkeyStr.draw(at: NSPoint(x: w / 2 - ms.width / 2, y: h - 80), withAttributes: monkeyAttrs)
-
-        // Title
-        drawCentered(L.shared.s("st_title"), y: h - 100, size: 22, bold: true,
+        // Clean header: title + subtitle only, the cards are the protagonists
+        drawCentered(L.shared.s("st_title"), y: h - 52, size: 22, bold: true,
                      color: NSColor(red: 1.0, green: 0.85, blue: 0.2, alpha: 1.0), in: w)
-
-        // Subtitle
-        drawCentered(L.shared.s("st_choose_level"), y: h - 130, size: 14,
-                     color: NSColor(white: 0.8, alpha: 1.0), in: w)
+        drawCentered(L.shared.s("st_choose_level"), y: h - 80, size: 12,
+                     color: NSColor(white: 0.75, alpha: 1.0), in: w)
 
         // Draw level cards
         let cardHeight: CGFloat = 56
         let cardSpacing: CGFloat = 8
         let totalCardsHeight = CGFloat(DifficultyLevel.allCases.count) * (cardHeight + cardSpacing)
-        let startY = h / 2 + totalCardsHeight / 2 - 30
+        let startY = h / 2 + totalCardsHeight / 2 - 46
 
         for (index, level) in DifficultyLevel.allCases.enumerated() {
             let cardRect = levelCardRect(index: index)
@@ -1020,9 +1117,6 @@ final class SpeedTypeView: NSView {
         drawCentered(L.shared.s("g_press_start"), y: navHintY - 25, size: 15,
                      color: NSColor(white: 1.0, alpha: pulse), in: w)
 
-        // Keyboard decoration
-        drawCentered("⌨️🐒🍌", y: navHintY - 60, size: 26,
-                     color: .white, in: w)
     }
 
     // MARK: - Game Screen
@@ -1139,24 +1233,55 @@ final class SpeedTypeView: NSView {
             drawStr.draw(at: NSPoint(x: w / 2 - pSize.width / 2, y: textAreaY - 32), withAttributes: previewAttrs)
         }
 
-        // Input area (what user has typed)
+        // (The old duplicate input box is gone: the colored target text with
+        // its block cursor already carries all the information.)
         let inputY = h / 2 - 70
-        let inputRect = CGRect(x: 30, y: inputY, width: w - 60, height: 36)
 
-        // Input background
-        ctx.setFillColor(NSColor(white: 0.1, alpha: 0.6).cgColor)
-        let inputPath = CGPath(roundedRect: inputRect, cornerWidth: 8, cornerHeight: 8, transform: nil)
-        ctx.addPath(inputPath)
-        ctx.fillPath()
+        // Flow bar: 4 tiers filled by consecutive correct characters
+        let flowBarW: CGFloat = 180
+        let flowBarX = w / 2 - flowBarW / 2
+        let flowBarY = inputY + 6
+        let tier = flowTier
+        for i in 0..<4 {
+            let segW = (flowBarW - 3 * 4) / 4
+            let segRect = CGRect(x: flowBarX + CGFloat(i) * (segW + 4), y: flowBarY, width: segW, height: 5)
+            let segPath = CGPath(roundedRect: segRect, cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
+            if i < tier {
+                ctx.setFillColor(tierColor(i + 1).cgColor)
+            } else if i == tier {
+                // Partial progress toward the next tier
+                let tierSpans: [(Int, Int)] = [(0, 10), (10, 25), (25, 45), (45, 70)]
+                let (lo, hi) = tierSpans[min(i, 3)]
+                let f = max(0, min(1, CGFloat(combo - lo) / CGFloat(hi - lo)))
+                ctx.setFillColor(NSColor(white: 1.0, alpha: 0.12).cgColor)
+                ctx.addPath(segPath)
+                ctx.fillPath()
+                if f > 0 {
+                    let fillRect = CGRect(x: segRect.minX, y: segRect.minY, width: segRect.width * f, height: segRect.height)
+                    ctx.setFillColor(tierColor(i + 1).withAlphaComponent(0.8).cgColor)
+                    ctx.fill(fillRect)
+                }
+                continue
+            } else {
+                ctx.setFillColor(NSColor(white: 1.0, alpha: 0.12).cgColor)
+            }
+            ctx.addPath(segPath)
+            ctx.fillPath()
+        }
 
-        // Cursor blink
-        let cursorVisible = Int(frameCount / 30) % 2 == 0
-        let inputStr = typedText + (cursorVisible ? "▏" : " ")
-        let inputAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 18, weight: .regular),
-            .foregroundColor: NSColor(white: 0.9, alpha: 1.0),
-        ]
-        (inputStr as NSString).draw(at: NSPoint(x: inputRect.minX + 8, y: inputRect.minY + 8), withAttributes: inputAttrs)
+        // Border tint rises with the flow tier (plasma pulses)
+        if tier > 0 {
+            let pulse: CGFloat = tier == 4 ? 0.16 + 0.10 * sin(CGFloat(frameCount) * 0.15) : 0.16
+            ctx.setStrokeColor(tierColor(tier).withAlphaComponent(pulse).cgColor)
+            ctx.setLineWidth(5)
+            ctx.stroke(bounds.insetBy(dx: 3, dy: 3))
+        }
+
+        // "GO!" white flash
+        if goFlashFrames > 0 {
+            ctx.setFillColor(NSColor(white: 1.0, alpha: CGFloat(goFlashFrames) / 8.0 * 0.45).cgColor)
+            ctx.fill(bounds)
+        }
 
         // Accuracy display
         let accuracy = calculateAccuracy()
@@ -1249,70 +1374,86 @@ final class SpeedTypeView: NSView {
         let wpm = finalWPM
         let accuracy = calculateAccuracy()
         let isRecord = finishedAsRecord
+        let rf = resultsFrame
 
-        // Monkey reaction
-        let bigMonkey: String
-        if wpm >= 80 { bigMonkey = "🦍" }
-        else if wpm >= 50 { bigMonkey = "🐒" }
-        else if wpm >= 30 { bigMonkey = "🐵" }
-        else { bigMonkey = "🙈" }
+        // ── Staggered reveal: title → WPM count-up → stats → delta →
+        // chart+ghost → medal → restart. Each step lands with a tick. ──
 
-        let monkeyAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 60)]
-        let ms = (bigMonkey as NSString).size(withAttributes: monkeyAttrs)
-        (bigMonkey as NSString).draw(at: NSPoint(x: w / 2 - ms.width / 2, y: h / 2 + 140), withAttributes: monkeyAttrs)
-
-        // Title
+        // Title + level (frame 0+)
         let title = isRecord ? L.shared.s("g_new_record") : L.shared.s("st_time_up")
         let titleColor = isRecord ?
             NSColor(red: 1.0, green: 0.85, blue: 0.1, alpha: 1.0) :
             NSColor(white: 1.0, alpha: 1.0)
-        drawCentered(title, y: h / 2 + 105, size: 24, bold: true, color: titleColor, in: w)
-
-        // Level played
-        let levelStr = "\(selectedLevel.emoji) \(L.shared.s(selectedLevel.locKey))"
-        drawCentered(levelStr, y: h / 2 + 80, size: 14,
+        drawCentered(title, y: h / 2 + 150, size: 24, bold: true, color: titleColor, in: w)
+        drawCentered("\(selectedLevel.emoji) \(L.shared.s(selectedLevel.locKey))", y: h / 2 + 124, size: 13,
                      color: selectedLevel.color, in: w)
 
-        // WPM (big)
-        drawCentered("\(wpm) WPM", y: h / 2 + 40, size: 42, bold: true,
-                     color: NSColor(red: 0.4, green: 1.0, blue: 0.5, alpha: 1.0), in: w)
-
-        // Stats
-        drawCentered(L.shared.sf("st_accuracy", accuracy), y: h / 2 + 5, size: 18,
-                     color: NSColor(white: 0.9, alpha: 1.0), in: w)
-        drawCentered(L.shared.sf("st_words_done", wordsCompleted), y: h / 2 - 20, size: 16,
-                     color: NSColor(white: 0.85, alpha: 1.0), in: w)
-        drawCentered(L.shared.sf("st_best_combo", bestCombo), y: h / 2 - 45, size: 16,
-                     color: NSColor(red: 1.0, green: 0.7, blue: 0.3, alpha: 0.9), in: w)
-        drawCentered(L.shared.sf("g_best_score", highScoreWPM), y: h / 2 - 70, size: 14,
-                     color: NSColor(red: 1.0, green: 0.85, blue: 0.3, alpha: 0.8), in: w)
-
-        // Recent runs for this difficulty
-        let historyKey = "MonkeysSpeedHistory_\(selectedLevel.rawValue)"
-        if let recent = UserDefaults.standard.array(forKey: historyKey) as? [Int], recent.count > 1 {
-            let joined = recent.map { "\($0)" }.joined(separator: " · ")
-            drawCentered(L.shared.sf("st_recent", joined), y: h / 2 - 90, size: 11,
-                         color: NSColor(white: 0.6, alpha: 0.9), in: w)
+        // WPM counts up (frame 12+)
+        if rf >= 12 {
+            let progress = min(1.0, CGFloat(rf - 12) / 26.0)
+            let eased = 1.0 - (1.0 - progress) * (1.0 - progress)
+            let shown = Int((CGFloat(wpm) * eased).rounded())
+            drawCentered("\(shown) WPM", y: h / 2 + 76, size: 42, bold: true,
+                         color: NSColor(red: 0.4, green: 1.0, blue: 0.5, alpha: 1.0), in: w)
         }
 
-        // WPM-over-time chart
-        drawWPMChart(ctx: ctx, w: w, h: h)
+        // Accuracy + words + combo (frame 40+)
+        if rf >= 40 {
+            drawCentered(L.shared.sf("st_accuracy", accuracy), y: h / 2 + 46, size: 16,
+                         color: NSColor(white: 0.9, alpha: 1.0), in: w)
+            drawCentered(L.shared.sf("st_words_done", wordsCompleted), y: h / 2 + 22, size: 14,
+                         color: NSColor(white: 0.85, alpha: 1.0), in: w)
+            drawCentered(L.shared.sf("st_best_combo", bestCombo), y: h / 2 - 2, size: 14,
+                         color: NSColor(red: 1.0, green: 0.7, blue: 0.3, alpha: 0.9), in: w)
+        }
 
-        // Performance message
-        let msg: String
-        if wpm >= 80 { msg = L.shared.s("st_living_typewriter") }
-        else if wpm >= 60 { msg = L.shared.s("st_fire_fingers") }
-        else if wpm >= 40 { msg = L.shared.s("st_great_job") }
-        else if wpm >= 20 { msg = L.shared.s("st_good_start") }
-        else { msg = L.shared.s("st_keep_trying") }
+        // Delta vs previous run + best (frame 55+)
+        if rf >= 55 {
+            let historyKey = "MonkeysSpeedHistory_\(selectedLevel.rawValue)"
+            if let recent = UserDefaults.standard.array(forKey: historyKey) as? [Int], recent.count > 1 {
+                let delta = recent[0] - recent[1]
+                let deltaText = delta > 0 ? "▲ +\(delta) WPM" : (delta < 0 ? "▼ \(delta) WPM" : "＝")
+                let deltaColor = delta > 0 ?
+                    NSColor(red: 0.45, green: 0.95, blue: 0.5, alpha: 1.0) :
+                    (delta < 0 ? NSColor(red: 1.0, green: 0.5, blue: 0.45, alpha: 1.0) : NSColor(white: 0.7, alpha: 1.0))
+                drawCentered(deltaText, y: h / 2 - 28, size: 14, bold: true, color: deltaColor, in: w)
+            }
+            drawCentered(L.shared.sf("g_best_score", highScoreWPM), y: h / 2 - 52, size: 12,
+                         color: NSColor(red: 1.0, green: 0.85, blue: 0.3, alpha: 0.8), in: w)
+        }
 
-        drawCentered(msg, y: h / 2 - 162, size: 14,
-                     color: NSColor(white: 0.8, alpha: 0.9), in: w)
+        // WPM chart with the ghost of your best run (frame 70+)
+        if rf >= 70 {
+            drawWPMChart(ctx: ctx, w: w, h: h)
+        }
 
-        // Restart hint
-        let pulse = 0.5 + 0.5 * sin(CGFloat(frameCount) * 0.06)
-        drawCentered(L.shared.s("g_press_restart"), y: h / 2 - 188, size: 14,
-                     color: NSColor(white: 1.0, alpha: pulse), in: w)
+        // Medal stamp with scale-in (frame 85+)
+        if rf >= 85 && earnedMedal != .none {
+            let stampProgress = min(1.0, CGFloat(rf - 85) / 6.0)
+            let stampScale = 1.7 - 0.7 * stampProgress
+            let medalText = earnedMedalIsNew ? "\(earnedMedal.emoji)✨" : earnedMedal.emoji
+            let medalStr = medalText as NSString
+            let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 30 * stampScale)]
+            let msz = medalStr.size(withAttributes: attrs)
+            medalStr.draw(at: NSPoint(x: w / 2 + 96 - msz.width / 2, y: h / 2 + 70), withAttributes: attrs)
+        }
+
+        // Performance message + restart (frame 85/100+)
+        if rf >= 85 {
+            let msg: String
+            if wpm >= 80 { msg = L.shared.s("st_living_typewriter") }
+            else if wpm >= 60 { msg = L.shared.s("st_fire_fingers") }
+            else if wpm >= 40 { msg = L.shared.s("st_great_job") }
+            else if wpm >= 20 { msg = L.shared.s("st_good_start") }
+            else { msg = L.shared.s("st_keep_trying") }
+            drawCentered(msg, y: h / 2 - 168, size: 13,
+                         color: NSColor(white: 0.8, alpha: 0.9), in: w)
+        }
+        if rf >= 100 {
+            let pulse = 0.5 + 0.5 * sin(CGFloat(frameCount) * 0.06)
+            drawCentered(L.shared.s("g_press_restart"), y: h / 2 - 194, size: 13,
+                         color: NSColor(white: 1.0, alpha: pulse), in: w)
+        }
 
         // Confetti on a new record — drawn on top of everything
         drawConfetti(ctx: ctx)
@@ -1325,7 +1466,7 @@ final class SpeedTypeView: NSView {
         let chartW: CGFloat = 220
         let chartH: CGFloat = 34
         let originX = w / 2 - chartW / 2
-        let originY = h / 2 - 138
+        let originY = h / 2 - 128
 
         // Panel
         ctx.setFillColor(NSColor(white: 0.0, alpha: 0.35).cgColor)
@@ -1334,8 +1475,25 @@ final class SpeedTypeView: NSView {
         ctx.addPath(panel)
         ctx.fillPath()
 
-        let maxWPM = max(wpmHistory.max() ?? 1, 1)
+        let ghost = UserDefaults.standard.array(forKey: "MonkeysBestCurve_\(selectedLevel.rawValue)") as? [Int] ?? []
+        let maxWPM = max(max(wpmHistory.max() ?? 1, ghost.max() ?? 1), 1)
         let stepX = chartW / CGFloat(wpmHistory.count - 1)
+
+        // Ghost: the curve of your best run, to race against
+        if ghost.count >= 2 {
+            let ghostStep = chartW / CGFloat(ghost.count - 1)
+            ctx.setStrokeColor(NSColor(white: 0.65, alpha: 0.45).cgColor)
+            ctx.setLineWidth(1.5)
+            ctx.setLineDash(phase: 0, lengths: [3, 3])
+            ctx.beginPath()
+            for (i, value) in ghost.enumerated() {
+                let x = originX + CGFloat(i) * ghostStep
+                let y = originY + chartH * CGFloat(value) / CGFloat(maxWPM)
+                if i == 0 { ctx.move(to: CGPoint(x: x, y: y)) } else { ctx.addLine(to: CGPoint(x: x, y: y)) }
+            }
+            ctx.strokePath()
+            ctx.setLineDash(phase: 0, lengths: [])
+        }
 
         // Line
         ctx.setStrokeColor(NSColor(red: 0.4, green: 1.0, blue: 0.5, alpha: 0.9).cgColor)

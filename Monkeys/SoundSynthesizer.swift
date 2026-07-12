@@ -249,8 +249,10 @@ final class SoundSynthesizer: @unchecked Sendable {
         return buffer
     }
 
-    /// Synthesises a quick, happy two-note major-fifth chime for successful typing hits.
-    func generateSuccessChime() -> AVAudioPCMBuffer? {
+    /// Synthesises a quick, happy two-note major-fifth chime.
+    /// `semitoneOffset` shifts the whole chime up: mapping it to the combo
+    /// makes progress audible without looking at the HUD.
+    func generateSuccessChime(semitoneOffset: Int = 0) -> AVAudioPCMBuffer? {
         let sampleRate = Float(Self.sampleRate)
         let duration: Float = 0.20
         let frameCount = AVAudioFrameCount(duration * sampleRate)
@@ -261,18 +263,21 @@ final class SoundSynthesizer: @unchecked Sendable {
         buffer.frameLength = frameCount
         guard let samples = buffer.floatChannelData?[0] else { return nil }
 
+        let clamped = min(max(semitoneOffset, 0), 14)
+        let pitchFactor = powf(2.0, Float(clamped) / 12.0)
+
         for i in 0 ..< Int(frameCount) {
             let t = Float(i) / sampleRate
-            var freq: Float = 600.0
+            var freq: Float = 600.0 * pitchFactor
             var amp: Float = 0.25
-            
+
             if t > 0.08 {
-                freq = 900.0 // Perfect fifth jump
+                freq = 900.0 * pitchFactor // Perfect fifth jump
                 amp *= expf(-(t - 0.08) / 0.05)
             } else {
                 amp *= expf(-t / 0.05)
             }
-            
+
             samples[i] = sinf(Self.twoPi * freq * t) * amp
         }
         return buffer

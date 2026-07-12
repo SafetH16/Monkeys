@@ -10,7 +10,7 @@ final class SpeedTypeWindow: NSWindow, NSWindowDelegate {
     let speedTypeView: SpeedTypeView
 
     init() {
-        let size = NSSize(width: 520, height: 500)
+        let size = NSSize(width: 520, height: 560)
         self.speedTypeView = SpeedTypeView(frame: NSRect(origin: .zero, size: size))
 
         super.init(

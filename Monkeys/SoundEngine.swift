@@ -383,14 +383,15 @@ final class SoundEngine: @unchecked Sendable {
         return (column / 13.5 - 0.5) * 0.7
     }
 
-    /// Plays the game success chime.
-    func playSuccess() {
+    /// Plays the game success chime, optionally pitched up by `semitone`
+    /// so a rising combo is audible without watching the HUD.
+    func playSuccess(semitone: Int = 0) {
         lock.lock()
         defer { lock.unlock() }
 
         guard isEnabled, engine.isRunning else { return }
 
-        if let buffer = synthesizer.generateSuccessChime() {
+        if let buffer = synthesizer.generateSuccessChime(semitoneOffset: semitone) {
             let player = nextPlayer()
             player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
             player.play()
@@ -629,6 +630,27 @@ final class SoundEngine: @unchecked Sendable {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
             self?.stopMusicIfStale(generation: generation)
         }
+    }
+
+    /// Briefly ducks the music (-N dB for ~0.35s) — the "gut punch" that makes
+    /// a lost life feel costly. Generation-guarded like every delayed closure.
+    func duckMusic() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let player = backgroundMusicPlayer, player.isPlaying else { return }
+        player.setVolume(0.03, fadeDuration: 0.06)
+        let generation = musicGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.restoreMusicVolume(generation: generation)
+        }
+    }
+
+    private func restoreMusicVolume(generation: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard generation == musicGeneration,
+              let player = backgroundMusicPlayer, player.isPlaying else { return }
+        player.setVolume(Self.musicVolume, fadeDuration: 0.25)
     }
 
     /// Pauses the music (keeps position) with a quick fade — used for in-game pause.

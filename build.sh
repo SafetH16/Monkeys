@@ -35,6 +35,7 @@ swiftc -o "${BUILD_DIR}/${APP_NAME}" \
   "${SCRIPT_DIR}/Monkeys/SoundProfileStore.swift" \
   "${SCRIPT_DIR}/Monkeys/SettingsWindow.swift" \
   "${SCRIPT_DIR}/Monkeys/VisualizerWindow.swift" \
+  "${SCRIPT_DIR}/Monkeys/GameProgress.swift" \
   "${SCRIPT_DIR}/Monkeys/OnboardingWindow.swift" \
   "${SCRIPT_DIR}/Monkeys/Localization.swift" \
   "${SCRIPT_DIR}/Monkeys/Updater.swift" \

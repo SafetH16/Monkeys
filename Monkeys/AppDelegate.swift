@@ -41,6 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var focusMenuItem: NSMenuItem!
     private var gameModeMenuItem: NSMenuItem!
     private var visualizerMenuItem: NSMenuItem!
+    private var missionMenuItem: NSMenuItem!
+    private var streakMenuItem: NSMenuItem!
 
     private let allProfiles: [SoundProfile] = [
         .blue, .brown, .red, .black, .silentRed, .speedSilver,
@@ -141,6 +143,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 else { tEmoji = "🐵" }
                 self.statsMenuItem.title = "\(tEmoji) \(L.shared.sf("today_keys", self.typingStats.formatNumber(tc)))"
                 self.peakWpmMenuItem.title = L.shared.sf("record_wpm", self.typingStats.getPeakWPM())
+                self.missionMenuItem.title = GameProgress.shared.missionMenuTitle
+                self.streakMenuItem.title = L.shared.sf("streak_days", GameProgress.shared.currentStreak)
                 // Persist batched keystroke counters away from the tap thread
                 self.typingStats.flushIfDirty()
             }
@@ -220,6 +224,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let speedItem = NSMenuItem(title: L.shared.s("game_speed"), action: #selector(startSpeedType), keyEquivalent: "t")
         speedItem.target = self
         menu.addItem(speedItem)
+
+        missionMenuItem = NSMenuItem(title: GameProgress.shared.missionMenuTitle, action: nil, keyEquivalent: "")
+        missionMenuItem.isEnabled = false
+        menu.addItem(missionMenuItem)
+
+        streakMenuItem = NSMenuItem(
+            title: L.shared.sf("streak_days", GameProgress.shared.currentStreak),
+            action: nil, keyEquivalent: ""
+        )
+        streakMenuItem.isEnabled = false
+        menu.addItem(streakMenuItem)
 
         shortcutMenuItem = NSMenuItem(title: "\(L.shared.s("shortcut_prefix")): \(getShortcutString())", action: #selector(changeShortcut), keyEquivalent: "")
         shortcutMenuItem.target = self
@@ -725,6 +740,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             gameWindow?.gameView.onResumeMusic = { [weak self] in
                 self?.soundEngine.resumeMusic()
             }
+            gameWindow?.gameView.onDuckMusic = { [weak self] in
+                self?.soundEngine.duckMusic()
+            }
+            gameWindow?.gameView.onPlayTick = { [weak self] in
+                self?.soundEngine.playCountdownTick()
+            }
         }
 
         gameWindow?.gameView.resetGame()
@@ -756,6 +777,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             speedTypeWindow?.speedTypeView.onPlayRecordSound = { [weak self] in
                 self?.soundEngine.playGolden()
+            }
+            speedTypeWindow?.speedTypeView.onPlaySuccessSemitone = { [weak self] semitone in
+                self?.soundEngine.playSuccess(semitone: semitone)
             }
             speedTypeWindow?.speedTypeView.onStartMusic = { [weak self] in
                 self?.soundEngine.startMusic()
