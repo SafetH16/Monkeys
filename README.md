@@ -1,119 +1,149 @@
-# MonKeys ⌨️🍌
+<div align="center">
 
-![MonKeys Icon](cover.png)
+<img src="cover.png" alt="MonKeys — a monkey on a keycap" width="340">
 
-**MonKeys** is a macOS menu bar app that turns your keyboard into a virtual mechanical keyboard. Every keypress produces a realistic, **procedurally synthesized** switch sound — with per-key stereo positioning, natural per-press variation, distinct acoustic character for space/enter/modifiers, and a fully custom preset editor. It also ships two typing mini-games, a local statistics dashboard with a keyboard heatmap, and an optional on-screen keyboard visualizer.
+# MonKeys
 
-> 🔒 **Privacy first**: MonKeys never records, stores or transmits the text you type. Key events trigger local sounds and visuals, then they are discarded. All statistics are aggregate counters that never leave your Mac. The only network access is the update check against GitHub Releases — no analytics, no telemetry.
+**The mechanical keyboard your Mac always wanted.**
 
-> 🎵 **All built-in sounds are procedurally synthesized.** No third-party audio recordings are distributed with this app.
+Procedurally synthesized key sounds · per-app profiles · typing games · zero telemetry
+
+[![Build](https://github.com/SafetH16/Monkeys/actions/workflows/build.yml/badge.svg)](https://github.com/SafetH16/Monkeys/actions/workflows/build.yml)
+![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
+![macOS 13+](https://img.shields.io/badge/macOS-13%2B-111111?logo=apple&logoColor=white)
+![Version](https://img.shields.io/badge/version-1.9.0-4B8BBE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
+
+[Install](#install) · [Features](#features) · [Privacy & security](#privacy--security) · [Build from source](#build-from-source) · [Changelog](CHANGELOG.md)
+
+</div>
 
 ---
 
-## 🚀 Install
+**MonKeys** is a macOS menu bar utility that turns any keyboard into a virtual mechanical keyboard. Every keypress produces a **procedurally synthesized** switch sound with per-key stereo positioning, natural per-press variation and a distinct acoustic character for space, enter, modifiers and more. It ships a full preset editor, per-app sound rules with automatic meeting muting, two arcade-quality typing games, a local statistics dashboard and an on-screen keyboard visualizer — all in a single, dependency-free app.
+
+> **Privacy first.** MonKeys never records, stores or transmits what you type. Key events trigger local sounds and visuals, then they are discarded. Statistics are aggregate counters that never leave your Mac. The only network access is the update check against GitHub Releases — no analytics, no telemetry.
+
+## Features
+
+| | |
+|---|---|
+| 🔊 **Procedural sound engine** | 18 built-in switch voices (Clicky Blue, Tactile Brown, Linear Red, Deep Thock, Silent Office, Terminal…), 16-voice polyphony, stereo panning by physical key position, ±2% pitch / ±5% gain natural variation |
+| 🎛 **Preset editor** | 8 synthesis parameters with live preview, user presets, validated JSON import/export |
+| 🪟 **Per-app profiles** | One rule per app: mute, force a voice, custom volume — applied the instant you switch apps |
+| 🤫 **Meeting mode** | Auto-mutes when Zoom, Teams, FaceTime & co. come to the front (configurable whitelist) |
+| 🧘 **Focus & Game modes** | One-click quiet profile at low volume, or boosted WASD/Space for gaming |
+| 🎮 **Typing games** | *Save the Bananas* (waves, boss bananas, weekly duel, unlockable palettes) and *Speed Challenge* (5 difficulties + weak-key drill, ghost curve, flow tiers with dynamic music) |
+| 🏅 **Progression** | Medals per mode, daily missions, play streak — and a monkey typing rank from *Capuchin* to *Silverback* |
+| 📊 **Statistics** | Today/all-time counters, peak WPM, keyboard heatmap, top keys — aggregate-only, clearable |
+| ⌨️ **Visualizer** | Floating panel that lights up keys as you type |
+| 🌍 **9 languages** | English, Italiano, Español, Français, Deutsch, Português, 日本語, 中文, 한국어 |
+
+## Install
 
 1. **[Download the latest MonKeys.zip](https://github.com/SafetH16/Monkeys/releases/latest/download/MonKeys.zip)**
-2. Unzip and move **`MonKeys.app`** into your **Applications** folder.
-3. MonKeys is currently **not code-signed or notarized** (no paid Apple Developer account yet), so Gatekeeper will warn you on first launch. To clear the quarantine flag, run in Terminal:
+2. Unzip and move **`MonKeys.app`** into **Applications**.
+3. MonKeys is currently **not code-signed or notarized**, so Gatekeeper warns on first launch. Clear the quarantine flag once:
    ```bash
    xattr -cr /Applications/MonKeys.app
    ```
-4. Launch the app and grant the **Accessibility** permission when prompted (see [Permissions](#-permissions)).
+4. Launch the app and grant the **Accessibility** permission when prompted (see below).
 
-## 🔑 Permissions
+### Permissions
 
-MonKeys uses a global `CGEvent` tap to detect key presses system-wide, which on macOS requires the **Accessibility** permission (System Settings → Privacy & Security → Accessibility → enable MonKeys). A friendly onboarding window guides you through this on first launch and disappears automatically once the permission is granted.
+MonKeys uses a global `CGEvent` tap to detect key presses system-wide, which requires the **Accessibility** permission (System Settings → Privacy & Security → Accessibility). An onboarding window guides you through it on first launch and closes automatically once granted.
 
-That is the only permission MonKeys needs. It does not request microphone, screen recording, camera, or network permissions beyond the standard outgoing connection used by the updater.
+That is the *only* permission MonKeys needs — no microphone, no screen recording, no camera. If macOS temporarily disables the event tap under heavy load, MonKeys re-enables it automatically.
 
-If macOS temporarily disables the event tap (it can happen under heavy load), MonKeys re-enables it automatically.
+> **Note for source builds:** the app is ad-hoc signed, so every reinstall changes its code signature and macOS silently invalidates the previous Accessibility grant. Remove MonKeys from the Accessibility list (−) and add it again (+), or run `tccutil reset Accessibility com.safethalipaj.MonkeysApp`.
 
-## 🧭 Menu bar
+## The menu
 
-| Item | What it does |
-|---|---|
-| ✅ Enabled / ❌ Disabled | Master toggle for all key sounds (same state as the shortcut) |
-| ⌨️ Shortcut | Global mute shortcut, default **Control+Shift+K**, fully re-mappable |
-| 🎧 Test Sound | Plays a click + release of the current voice without typing |
-| 🔊 Volume | Master volume slider (persisted) |
-| 🎵 Game Music | Toggles background music in the mini-games |
-| 🍌 / ⌨️ Games | *Save the Bananas* and *Speed Challenge* |
-| 🤫 Auto-Mute | Meeting Mode toggle (see below) |
-| 🚀 Launch at Login | Starts MonKeys automatically (macOS 13+) |
-| 🧘 Focus Mode | Instantly switches to a silent voice at 30% volume |
-| 🎮 Game Mode | Boosts WASD/Space/Shift/digits, attenuates everything else |
-| ⌨️ Keyboard Visualizer | Floating panel that lights up keys as you type |
-| 🔇 Mute for Current App / ➕ Profile for Current App | One-click per-app rules |
-| ⚙️ Settings… | Opens the full preferences window |
-| 📊 Statistics | Live WPM, daily counters, heatmap dashboard |
+A compact, native menu — rebuilt live on every open:
 
-The menu is localized in 9 languages (EN, IT, ES, FR, DE, PT, JA, ZH, KO).
+- **Status header** — what is playing and why (*Active · Tactile Brown*, *Muted · meeting (Zoom)*, *Focus · volume 30%*…), plus live WPM and today's key count.
+- **Sounds** — master toggle with its global shortcut (default **⌃⇧K**, re-mappable) and a volume slider with live percentage.
+- **Preset** — all built-in and user voices, with an audible preview.
+- **Current app** — a contextual submenu named after the frontmost app (with its icon): mute it in one click or create/edit its rule.
+- **Modes** — Focus, Game, Mute in meetings.
+- **Games** — both games, game music, today's mission and play streak.
+- **Statistics…**, **Settings…** (⌘,), **Quit**.
 
-## 🎛 Sound presets & custom editor
+## Sound engine
 
-18 built-in procedural presets, including classic switch emulations (Clicky Blue-style, Tactile Brown-style, Linear Red-style…), **Deep Thock**, **Silent Office**, **Terminal**, **Soft Mac-like**, Retro Typewriter, ASMR bubbles and more.
+All built-in sounds are **synthesized at runtime** — no third-party audio recordings are distributed. Space, Enter, Backspace, modifiers, navigation, function and numpad keys each have their own acoustic character; every press gets subtle pitch/gain variation and stereo placement matching the key's physical position. Buffers are cached per key after first synthesis, keeping the event-tap path allocation-free and low-latency.
 
-In **Settings → Sound** you can:
-- edit 8 synthesis parameters (loudness, pitch, click character, thock depth, resonance, hold, release, variation) with **live preview** while you type;
-- save your edits as **user presets** (built-ins are never modified);
-- **export / import** presets as JSON. Imports are strictly validated: 256 KB size limit, schema version check, numeric range clamping, and name collisions are auto-renamed — never silently overwritten. A malformed file can't crash the app.
+In **Settings → Sound** you can edit 8 synthesis parameters (loudness, pitch, click character, thock depth, resonance, hold, release, variation) with live preview, save user presets (built-ins are never modified) and export/import presets as JSON. Imports are strictly validated — 256 KB limit, schema check, numeric clamping, collision auto-rename — a malformed file cannot crash the app.
 
-Every key press gets subtle natural variation (~±2% pitch, ±5% gain) and per-key **stereo panning** matching the key's physical position. Space, Enter, Backspace, modifiers, navigation, function and numpad keys each have their own acoustic character. Sounds are cached per key after first synthesis, keeping the event-tap path allocation-free and low-latency, with full 16-voice polyphony.
+## App profiles & meeting mode
 
-## 🪟 App Profiles & Meeting Mode
+**Settings → App Profiles** defines one rule per application: enable/disable sounds, force a voice, set a volume, or mute entirely while that app is frontmost.
 
-**Settings → App Profiles** lets you define one rule per application (bundle identifier): enable/disable sounds, force a profile, set a custom volume, or mute entirely while that app is frontmost.
+**Meeting mode** is intentionally best-effort: it reacts to the frontmost app matching a configurable whitelist (Zoom, Teams, FaceTime, Skype, Slack, Webex, Discord by default). MonKeys does **not** access your microphone, screen or other apps' content, so it cannot know with certainty that a call is active.
 
-**Meeting Mode** (best effort): when the frontmost app is in the configurable meeting whitelist (Zoom, Teams, FaceTime, Skype, Slack, Webex, Discord by default), sounds auto-mute and the menu shows *Auto-muted (meeting)*. Detection is intentionally based only on the frontmost app — MonKeys does **not** access your microphone, screen, or other apps' content, so it cannot know with certainty that a call is active.
+Priority, highest first: manual mute → manual unmute override (holds until you switch apps) → meeting mode → app rule → global settings.
 
-**Priority** (highest wins): your manual mute → manual unmute override (holds until you switch app) → Meeting Mode → app rule → global settings.
+## Games
 
-## 🎮 Mini-games
+- 🍌 **Save the Bananas** — catch falling letters before they reach the ground. 40-second waves with scorecards, golden bananas, bombs, ice, word bananas, **boss bananas**, Fever ×2, a deterministic **weekly duel** with a shareable score, and four unlockable color palettes. Zen mode (**Z**) removes lives for younger players.
+- ⌨️ **Speed Challenge** — five difficulties plus a **weak-key drill** built from your own heatmap, 3-2-1 countdown, live WPM/accuracy/combo, flow tiers that drive the music intensity, a **ghost curve** of your best run, and word banks in 6 languages.
 
-- **🍌 Save the Bananas** — catch falling letters before they hit the ground. Golden bananas 🌟 heal and multiply points, bombs 💣 must *not* be typed, ice ❄️ slows time, combos trigger Fever ×2. Zen mode (press **Z**) removes lives for younger players.
-- **⌨️ Speed Challenge** — 4 difficulty levels selectable by mouse or keyboard, 3-2-1 countdown, live WPM, accuracy, combo tracking, WPM-over-time chart and confetti on new records. Word banks in 6 languages.
+Both games feed a light progression layer: per-mode **medals**, one deterministic **daily mission**, a **play streak**, and an all-time **typing rank** (Capuchin → Gibbon → Macaque → Mandrill → Gorilla → Silverback) shown in the statistics dashboard. Everything lives in local `UserDefaults` — no accounts, no leaderboard servers.
 
-## 📊 Statistics & privacy
+## Statistics
 
-The dashboard (menu → Statistics) shows today's key count, all-time total, peak WPM, a **keyboard heatmap** of your most-pressed keys, and your top 5 keys.
+The dashboard (menu → Statistics…) shows today's key count, the all-time total, peak WPM, your monkey rank with progress to the next one, a keyboard heatmap and your top 5 keys.
 
 - Counters are **aggregate only**: no text, no key sequences, no per-event timestamps, no app targets.
-- Data is stored locally in the app sandbox and never transmitted.
-- You can disable statistics or **Clear Local Statistics** anytime in Settings → Privacy.
+- Stored locally in the app sandbox, never transmitted.
+- Disable or **Clear Local Statistics** anytime in Settings → Privacy.
 
-## 🔨 Build from source
+## Privacy & security
+
+- **No keylogging.** Key codes are used transiently for sound/visual dispatch and aggregate counters (opt-out), never stored as sequences or content.
+- **No dependencies.** No third-party code, package managers or external scripts at build time.
+- **Sandboxed.** App Sandbox with the single user-selected-file entitlement needed for preset import/export.
+- **Safe updates.** The updater downloads exclusively from this repository's GitHub Releases over HTTPS and swaps the bundle only after verifying the archive, keeping a backup for rollback.
+- **No secrets.** The repository and the shipped binary contain no credentials.
+
+## Build from source
 
 No Xcode project needed — the entire app compiles with `swiftc`:
 
 ```bash
-./build.sh          # produces build/MonKeys.app (arm64, macOS 13+, Swift 6)
+./build.sh          # → build/MonKeys.app (arm64, macOS 13+, Swift 6 strict concurrency)
 open build/MonKeys.app
 ```
 
-CI: a GitHub Actions workflow compiles every push/PR on `macos-14` with read-only permissions and no secrets.
+CI compiles every push and pull request on `macos-15` with read-only permissions and no secrets.
 
-## 🛠 Troubleshooting
+### Source layout
+
+| Area | Files |
+|---|---|
+| App & menu | `main.swift`, `AppDelegate.swift` |
+| Input | `KeyboardMonitor.swift` (CGEvent tap), `WPMTracker.swift` |
+| Audio | `SoundEngine.swift`, `SoundSynthesizer.swift`, `KeySoundProfile.swift` |
+| Presets | `SoundProfileStore.swift`, `SettingsStore.swift` |
+| Rules | `AppProfileManager.swift` |
+| UI | `SettingsWindow.swift`, `StatsWindow.swift`, `VisualizerWindow.swift`, `OnboardingWindow.swift` |
+| Games | `GameView.swift`, `SpeedTypeView.swift`, `GameProgress.swift` |
+| Misc | `TypingStats.swift`, `Updater.swift`, `Localization.swift` |
+
+## Troubleshooting
 
 | Problem | Fix |
 |---|---|
-| No sounds at all | Check the Accessibility permission; check the master toggle and volume; check you're not in Focus/Meeting auto-mute (menu shows the reason) |
-| "App is damaged / can't be opened" | Run `xattr -cr /Applications/MonKeys.app` (unsigned app, see above) |
-| Sounds stopped after granting permission | Quit and relaunch MonKeys once |
-| Auto-muted unexpectedly | An app rule or Meeting Mode matched the frontmost app — see Settings → App Profiles; a manual unmute overrides it until you switch app |
-| Update failed | The updater never deletes the old app before verifying the new one; simply retry or download from Releases |
+| No sounds at all | Check the Accessibility permission (see the note about reinstalls above); check the master toggle, the volume, and that no Focus/meeting auto-mute is active — the menu header always shows the reason |
+| "App is damaged / can't be opened" | `xattr -cr /Applications/MonKeys.app` (unsigned app) |
+| Sounds stopped after granting the permission | Quit and relaunch MonKeys once |
+| Auto-muted unexpectedly | An app rule or meeting mode matched the frontmost app — see Settings → App Profiles; a manual unmute overrides it until you switch apps |
+| Update failed | The updater never deletes the old app before verifying the new one — retry, or download from Releases |
 
-## 🔐 Security model
+## Roadmap
 
-- No keylogging: key codes are used transiently for sound/visual dispatch and aggregate counters (opt-out), never stored as sequences or content.
-- No third-party dependencies, no package managers, no external scripts at build time.
-- Preset JSON import is size-limited, schema-checked and range-clamped; writes are atomic.
-- The updater downloads exclusively from this repository's GitHub Releases over HTTPS and swaps the bundle only after verifying the archive.
-- The repository and the shipped binary contain no credentials or secrets.
+- **Code signing & notarization** — Developer ID signing with hardened runtime and notarization in `build.sh`/CI as soon as an Apple Developer membership is available; the `xattr` step then disappears. Nothing in the current design blocks this.
 
-## 🔭 Future: code signing & notarization
+## License
 
-MonKeys is not yet signed or notarized. When an Apple Developer membership is available, the plan is: Developer ID signing with hardened runtime, notarization in `build.sh`/CI, at which point the `xattr` step disappears. Nothing in the current design blocks this.
-
----
-
-*MonKeys does not record, store, or transmit anything you type. All included sounds are procedurally synthesized; no third-party audio recordings are distributed.*
+[MIT](LICENSE) — no monkeys were harmed in the making of this app. 🐒

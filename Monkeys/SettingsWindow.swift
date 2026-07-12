@@ -205,10 +205,11 @@ final class SettingsWindow: NSWindow {
         v.addSubview(note)
 
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        let versionLabel = NSTextField(labelWithString: "MonKeys v\(version)")
+        let versionLabel = NSTextField(
+            labelWithString: "MonKeys v\(version) — no monkeys were harmed in the making of this app.")
         versionLabel.font = NSFont.systemFont(ofSize: 10)
         versionLabel.textColor = .tertiaryLabelColor
-        versionLabel.frame = NSRect(x: 30, y: 6, width: 300, height: 16)
+        versionLabel.frame = NSRect(x: 30, y: 6, width: 470, height: 16)
         v.addSubview(versionLabel)
 
         return v

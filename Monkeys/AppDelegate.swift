@@ -150,15 +150,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let fallbackName = NSImage.Name("statusBarIcon")
             if let image = NSImage(named: imgName) ?? NSImage(named: fallbackName) {
                 image.isTemplate = true
-                button.image = image
-                button.title = ""
                 let active = isEnabled && !isAutoMuted
-                button.contentTintColor = active ? nil : NSColor.labelColor.withAlphaComponent(0.3)
+                button.image = active ? image : Self.slashedIcon(from: image)
+                button.title = ""
+                button.contentTintColor = active ? nil : NSColor.labelColor.withAlphaComponent(0.45)
             } else {
                 button.image = nil
-                button.title = (isEnabled && !isAutoMuted) ? "🐵" : "🤫"
+                button.title = (isEnabled && !isAutoMuted) ? "🐵" : "🙉"
             }
         }
+    }
+
+    /// Monkey icon with a diagonal slash (native "speaker.slash" idiom) for
+    /// the muted state. The knockout stroke keeps a gap around the slash so
+    /// it stays readable over the silhouette.
+    private static func slashedIcon(from base: NSImage) -> NSImage {
+        let img = NSImage(size: base.size, flipped: false) { rect in
+            base.draw(in: rect)
+            NSGraphicsContext.current?.compositingOperation = .destinationOut
+            let knockout = NSBezierPath()
+            knockout.move(to: NSPoint(x: rect.minX + rect.width * 0.10, y: rect.maxY - rect.height * 0.10))
+            knockout.line(to: NSPoint(x: rect.maxX - rect.width * 0.10, y: rect.minY + rect.height * 0.10))
+            knockout.lineWidth = rect.width * 0.24
+            knockout.lineCapStyle = .round
+            NSColor.black.setStroke()
+            knockout.stroke()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            let slash = NSBezierPath()
+            slash.move(to: NSPoint(x: rect.minX + rect.width * 0.13, y: rect.maxY - rect.height * 0.13))
+            slash.line(to: NSPoint(x: rect.maxX - rect.width * 0.13, y: rect.minY + rect.height * 0.13))
+            slash.lineWidth = rect.width * 0.09
+            slash.lineCapStyle = .round
+            NSColor.black.setStroke()
+            slash.stroke()
+            return true
+        }
+        img.isTemplate = true
+        return img
     }
 
     private func setupStatusItem() {

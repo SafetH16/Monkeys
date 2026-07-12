@@ -6,13 +6,44 @@
 
 import Cocoa
 
+/// Monkey-themed typing ranks, earned with all-time keystrokes.
+enum TypingRank: Int, CaseIterable {
+    case capuchin, gibbon, macaque, mandrill, gorilla, silverback
+
+    /// All-time keystrokes needed to hold each rank.
+    static let thresholds = [0, 50_000, 200_000, 600_000, 1_500_000, 5_000_000]
+
+    static func rank(forTotal total: Int) -> TypingRank {
+        var rank = TypingRank.capuchin
+        for (i, t) in thresholds.enumerated() where total >= t {
+            rank = TypingRank(rawValue: i) ?? .capuchin
+        }
+        return rank
+    }
+
+    var localizedName: String {
+        let key: String
+        switch self {
+        case .capuchin:   key = "rank_capuchin"
+        case .gibbon:     key = "rank_gibbon"
+        case .macaque:    key = "rank_macaque"
+        case .mandrill:   key = "rank_mandrill"
+        case .gorilla:    key = "rank_gorilla"
+        case .silverback: key = "rank_silverback"
+        }
+        return L.shared.s(key)
+    }
+
+    var next: TypingRank? { TypingRank(rawValue: rawValue + 1) }
+}
+
 /// Window that hosts the statistics dashboard.
 final class StatsWindow: NSWindow {
 
     let statsView: StatsView
 
     init() {
-        let size = NSSize(width: 560, height: 440)
+        let size = NSSize(width: 560, height: 508)
         self.statsView = StatsView(frame: NSRect(origin: .zero, size: size))
 
         super.init(
@@ -158,19 +189,84 @@ final class StatsView: NSView {
                           withAttributes: labelAttrs)
         }
 
+        // ── Typing rank banner ──
+        let banana = NSColor(red: 1.0, green: 0.78, blue: 0.15, alpha: 1.0)
+        let rank = TypingRank.rank(forTotal: totalCount)
+        let bannerH: CGFloat = 56
+        let bannerRect = CGRect(x: 20, y: cardY - 12 - bannerH, width: w - 40, height: bannerH)
+        let bannerPath = CGPath(roundedRect: bannerRect, cornerWidth: 12, cornerHeight: 12, transform: nil)
+        ctx.setFillColor(NSColor(white: 1.0, alpha: 0.06).cgColor)
+        ctx.addPath(bannerPath)
+        ctx.fillPath()
+        ctx.setStrokeColor(NSColor(white: 1.0, alpha: 0.08).cgColor)
+        ctx.setLineWidth(1)
+        ctx.addPath(bannerPath)
+        ctx.strokePath()
+
+        // Caption (left) + next-rank goal (right)
+        let captionAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: NSColor(white: 0.55, alpha: 1.0),
+        ]
+        (L.shared.s("rank_card") as NSString)
+            .draw(at: NSPoint(x: bannerRect.minX + 16, y: bannerRect.maxY - 21), withAttributes: captionAttrs)
+
+        let goal: String
+        if let next = rank.next {
+            goal = L.shared.sf("rank_next", next.localizedName,
+                               fmtN(TypingRank.thresholds[next.rawValue]))
+        } else {
+            goal = L.shared.s("rank_max")
+        }
+        let goalStr = goal as NSString
+        let gs = goalStr.size(withAttributes: captionAttrs)
+        goalStr.draw(at: NSPoint(x: bannerRect.maxX - 16 - gs.width, y: bannerRect.maxY - 21),
+                     withAttributes: captionAttrs)
+
+        // Rank name
+        let rankAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 16, weight: .bold),
+            .foregroundColor: banana,
+        ]
+        (("🐒 " + rank.localizedName) as NSString)
+            .draw(at: NSPoint(x: bannerRect.minX + 14, y: bannerRect.minY + 16), withAttributes: rankAttrs)
+
+        // Progress bar toward the next rank
+        let barRect = CGRect(x: bannerRect.minX + 16, y: bannerRect.minY + 8,
+                             width: bannerRect.width - 32, height: 4)
+        let barPath = CGPath(roundedRect: barRect, cornerWidth: 2, cornerHeight: 2, transform: nil)
+        ctx.setFillColor(NSColor(white: 1.0, alpha: 0.08).cgColor)
+        ctx.addPath(barPath)
+        ctx.fillPath()
+        let progress: CGFloat
+        if let next = rank.next {
+            let lo = TypingRank.thresholds[rank.rawValue]
+            let hi = TypingRank.thresholds[next.rawValue]
+            progress = min(max(CGFloat(totalCount - lo) / CGFloat(hi - lo), 0), 1)
+        } else {
+            progress = 1
+        }
+        if progress > 0 {
+            let fillRect = CGRect(x: barRect.minX, y: barRect.minY,
+                                  width: max(barRect.width * progress, 4), height: barRect.height)
+            ctx.setFillColor(banana.cgColor)
+            ctx.addPath(CGPath(roundedRect: fillRect, cornerWidth: 2, cornerHeight: 2, transform: nil))
+            ctx.fillPath()
+        }
+
         // ── Heatmap title ──
         let heatTitle = L.shared.s("stats_heatmap") as NSString
         let heatTitleAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
             .foregroundColor: NSColor(white: 0.85, alpha: 1.0),
         ]
-        heatTitle.draw(at: NSPoint(x: 24, y: cardY - 34), withAttributes: heatTitleAttrs)
+        heatTitle.draw(at: NSPoint(x: 24, y: bannerRect.minY - 34), withAttributes: heatTitleAttrs)
 
         // ── Keyboard heatmap ──
         let maxCount = max(keyCounts.values.max() ?? 1, 1)
         let unit: CGFloat = 40
         let gap: CGFloat = 5
-        let keyboardTop = cardY - 48
+        let keyboardTop = bannerRect.minY - 48
         let rowH = unit * 0.82
 
         for (rowIndex, row) in layoutRows.enumerated() {
