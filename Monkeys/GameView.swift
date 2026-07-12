@@ -17,6 +17,7 @@ final class GameView: NSView {
         case bomb     // 💣 trap: typing it costs a life
         case ice      // ❄️ power-up: slows time for a few seconds
         case word     // 🍌🍌 bunch: type the whole word to catch it
+        case boss     // 👑 end-of-wave giant: type the long word before it lands
     }
 
     struct GameBanana {
@@ -160,6 +161,72 @@ final class GameView: NSView {
     /// Y below which a banana is "in danger" (line + pulse + warning tick).
     private let dangerY: CGFloat = 165
 
+    // ── Waves ──
+    // Each wave is one time-of-day phase (~40s) with its own modifier:
+    // afternoon = denser, evening = wind, night = faster but more golden.
+    // Between waves: 4.5s scorecard breather.
+    private var waveNumber = 1
+    private var waveElapsed: CGFloat = 0
+    private let waveDuration: CGFloat = 40
+    private var waveEnding = false
+    private var intermissionFrames = 0
+    private var waveCaught = 0
+    private var waveMissed = 0
+    private var scorecardCaught = 0
+    private var scorecardMissed = 0
+    private var bossSpawnedThisWave = false
+    private var isBossOnField: Bool { bananas.contains { $0.kind == .boss } }
+
+    // ── Weekly duel: seeded deterministic run, one seed per ISO week ──
+    private var isDuelMode = false
+    struct SeededGenerator: RandomNumberGenerator {
+        var state: UInt64
+        mutating func next() -> UInt64 {
+            state &+= 0x9E3779B97F4A7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+            z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+            return z ^ (z >> 31)
+        }
+    }
+    private var duelRNG = SeededGenerator(state: 1)
+    private var duelSpawnCountdown = 0
+    private let duelDuration: CGFloat = 90
+
+    static func currentWeekTag() -> Int {
+        let cal = Calendar(identifier: .iso8601)
+        let comps = cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: Date())
+        return (comps.yearForWeekOfYear ?? 2026) * 100 + (comps.weekOfYear ?? 1)
+    }
+
+    /// 0…1 double from the duel RNG (used only in duel mode).
+    private func duelRoll() -> Double {
+        Double(duelRNG.next() % 1_000_000) / 1_000_000.0
+    }
+
+    // ── Cosmetic palettes, unlocked with medals ──
+    enum GamePalette: Int, CaseIterable {
+        case jungle, sunset, synthwave, mono
+        var displayName: String {
+            switch self {
+            case .jungle: return "Jungle"
+            case .sunset: return "Sunset"
+            case .synthwave: return "Synthwave"
+            case .mono: return "Mono"
+            }
+        }
+        var requiredMedalScore: Int {
+            switch self {
+            case .jungle: return 0
+            case .sunset: return 2
+            case .synthwave: return 5
+            case .mono: return 8
+            }
+        }
+    }
+    private var palette: GamePalette =
+        GamePalette(rawValue: UserDefaults.standard.integer(forKey: "MonkeysGamePalette")) ?? .jungle
+
     // Power-ups
     private var freezeFrames: Int = 0                  // > 0 while time is slowed
     private let freezeDuration: Int = 300              // 5 s at 60 fps
@@ -213,6 +280,21 @@ final class GameView: NSView {
     private func randomBunchWord() -> String {
         let bank = Self.wordBunchBank[L.shared.current] ?? Self.wordBunchBank[.en] ?? ["MANGO"]
         return bank.randomElement() ?? "MANGO"
+    }
+
+    /// Long words for the end-of-wave boss (6-9 letters, accent-free).
+    private static let bossWordBank: [L.Lang: [String]] = [
+        .it: ["BANANA", "SCIMMIA", "GIUNGLA", "FORESTA", "TESORO", "CASCATA"],
+        .en: ["BANANA", "MONKEY", "JUNGLE", "FOREST", "COCONUT", "TREASURE"],
+        .es: ["PLATANO", "JUNGLA", "TESORO", "CASCADA", "BOSQUE"],
+        .fr: ["BANANE", "JUNGLE", "TRESOR", "CASCADE", "SINGES"],
+        .de: ["BANANE", "URWALD", "SCHATZ", "GORILLA", "PALMEN"],
+        .pt: ["BANANA", "MACACO", "FLORESTA", "TESOURO", "CASCATA"],
+    ]
+
+    private func randomBossWord() -> String {
+        let bank = Self.bossWordBank[L.shared.current] ?? Self.bossWordBank[.en] ?? ["BANANA"]
+        return bank.randomElement() ?? "BANANA"
     }
 
     // MARK: - Init
@@ -318,6 +400,15 @@ final class GameView: NSView {
         bannerFrames = 0
         freezeFrames = 0
         isPaused = false
+        waveNumber = 1
+        waveElapsed = 0
+        waveEnding = false
+        intermissionFrames = 0
+        waveCaught = 0
+        waveMissed = 0
+        bossSpawnedThisWave = false
+        duelRNG = SeededGenerator(state: UInt64(Self.currentWeekTag()))
+        duelSpawnCountdown = 60
         score = 0
         lives = 5
         level = 1
@@ -435,9 +526,45 @@ final class GameView: NSView {
             monkeyPose = isFever ? .celebrate : .idle
         }
 
-        // Update time of day
-        let phase = Int(gameElapsedSeconds / timePhaseSeconds) % 4
-        timeOfDay = TimeOfDay(rawValue: phase) ?? .morning
+        // ── Wave machine (duel mode is a single seeded 90s run instead) ──
+        if isDuelMode {
+            timeOfDay = TimeOfDay(rawValue: Int(gameElapsedSeconds / timePhaseSeconds) % 4) ?? .morning
+            if gameElapsedSeconds >= duelDuration {
+                endGame()
+                return
+            }
+        } else {
+            waveElapsed += 1.0 / 60.0
+            // One wave = one time-of-day phase, each with its own modifier
+            timeOfDay = TimeOfDay(rawValue: (waveNumber - 1) % 4) ?? .morning
+
+            if !waveEnding && waveElapsed >= waveDuration {
+                waveEnding = true // stop spawning, let the field clear
+            }
+            if waveEnding && intermissionFrames == 0 && bananas.isEmpty && flyingCatches.isEmpty {
+                if waveNumber >= 2 && !bossSpawnedThisWave {
+                    bossSpawnedThisWave = true
+                    spawnBoss()
+                } else {
+                    scorecardCaught = waveCaught
+                    scorecardMissed = waveMissed
+                    intermissionFrames = 270 // 4.5s scorecard breather
+                    onPlayTick?()
+                }
+            }
+            if intermissionFrames > 0 {
+                intermissionFrames -= 1
+                if intermissionFrames == 0 {
+                    waveNumber += 1
+                    waveElapsed = 0
+                    waveEnding = false
+                    bossSpawnedThisWave = false
+                    waveCaught = 0
+                    waveMissed = 0
+                    onPlayLevelUpSound?()
+                }
+            }
+        }
 
         // Update clouds
         for i in 0..<clouds.count {
@@ -452,14 +579,24 @@ final class GameView: NSView {
             palmTrees[i].sway += palmTrees[i].swaySpeed
         }
 
-        // Spawn bananas (freeze slows the spawn cadence too)
-        let now = Date()
-        var effectiveSpawnInterval = max(0.45, spawnInterval - Double(level - 1) * 0.15)
-        if freezeFrames > 0 { effectiveSpawnInterval *= 1.6 }
-        let maxBananas = 4 + level
-        if now.timeIntervalSince(lastSpawnTime) >= effectiveSpawnInterval && bananas.count < maxBananas {
-            spawnBanana()
-            lastSpawnTime = now
+        // Spawn bananas — wave/boss gated, with per-phase modifiers
+        if isDuelMode {
+            duelSpawnCountdown -= 1
+            if duelSpawnCountdown <= 0 && bananas.count < 4 + level {
+                spawnBanana()
+                duelSpawnCountdown = max(32, 88 - level * 6)
+            }
+        } else if !waveEnding && intermissionFrames == 0 && !isBossOnField {
+            let now = Date()
+            var effectiveSpawnInterval = max(0.45, spawnInterval - Double(level - 1) * 0.15)
+            if freezeFrames > 0 { effectiveSpawnInterval *= 1.6 }
+            if timeOfDay == .afternoon { effectiveSpawnInterval *= 0.85 } // denser
+            if timeOfDay == .night { effectiveSpawnInterval *= 1.25 }     // rarer but faster
+            let maxBananas = 4 + level
+            if now.timeIntervalSince(lastSpawnTime) >= effectiveSpawnInterval && bananas.count < maxBananas {
+                spawnBanana()
+                lastSpawnTime = now
+            }
         }
 
         // Move bananas (each carries its own speed, with gentle horizontal wobble).
@@ -488,6 +625,24 @@ final class GameView: NSView {
         let fallen = bananas.filter { $0.position.y < groundY }
         bananas.removeAll { $0.position.y < groundY }
         for banana in fallen {
+            if banana.kind == .boss {
+                if !isZenMode { lives -= 2 } // the boss hits hard
+                waveMissed += 1
+                comboCount = 0
+                shakeImpulse(14)
+                missFlashFrames = 14
+                spawnParticles(at: CGPoint(x: banana.position.x, y: groundY),
+                               count: 30,
+                               colors: [NSColor(red: 1.0, green: 0.6, blue: 0.1, alpha: 1.0),
+                                        NSColor(red: 1.0, green: 0.3, blue: 0.1, alpha: 1.0)])
+                onPlayFailSound?()
+                onDuckMusic?()
+                if lives <= 0 {
+                    endGame()
+                    return
+                }
+                continue
+            }
             if banana.kind == .bomb {
                 // Bomb hits the ground and fizzles out — dust puff, no damage
                 spawnParticles(at: CGPoint(x: banana.position.x, y: groundY),
@@ -504,6 +659,7 @@ final class GameView: NSView {
                 continue
             }
             if !isZenMode { lives -= 1 }
+            waveMissed += 1
             comboCount = 0
             shakeImpulse(7)
             missFlashFrames = 12
@@ -574,6 +730,10 @@ final class GameView: NSView {
     }
 
     private func spawnBanana() {
+        if isDuelMode {
+            spawnDuelBanana()
+            return
+        }
         // Never spawn a letter that is already falling: with bombs in play,
         // duplicated letters would make hits ambiguous.
         let usedLetters = Set(bananas.map { $0.character })
@@ -584,7 +744,8 @@ final class GameView: NSView {
 
         var kind: BananaKind
         let roll = Double.random(in: 0...1)
-        if level >= 2 && roll < 0.08 {
+        let goldenChance = timeOfDay == .night ? 0.12 : 0.08
+        if level >= 2 && roll < goldenChance {
             kind = .golden
         } else if level >= 4 && roll >= 0.08 && roll < 0.15 && freezeFrames == 0 {
             kind = .ice
@@ -614,6 +775,7 @@ final class GameView: NSView {
         let x = CGFloat.random(in: 30...(bounds.width - 30))
         var speed = (1.5 + CGFloat(level - 1) * 0.18) * CGFloat.random(in: 0.85...1.15)
         if spawnCount <= 3 { speed *= 0.8 }
+        if timeOfDay == .night { speed *= 1.18 } // night wave: rarer but faster
         if kind == .golden { speed *= 1.35 } // golden bananas are faster — worth the chase
         if kind == .word { speed *= 0.62 }   // whole word to type: falls slower
 
@@ -640,6 +802,56 @@ final class GameView: NSView {
         bananas.append(banana)
     }
 
+    /// Weekly duel spawn: every random draw comes from the seeded RNG so
+    /// everyone playing the same ISO week faces the same banana sequence.
+    /// No words, no boss, no scripted golden: pure comparable skill.
+    private func spawnDuelBanana() {
+        spawnCount += 1
+        let usedLetters = Set(bananas.map { $0.character })
+        let freeLetters = availableLetters.filter { !usedLetters.contains($0) }
+        guard !freeLetters.isEmpty else { return }
+        let char = freeLetters[Int(duelRNG.next() % UInt64(freeLetters.count))]
+
+        let roll = duelRoll()
+        var kind: BananaKind = .normal
+        if level >= 2 && roll < 0.08 { kind = .golden }
+        else if level >= 4 && roll >= 0.08 && roll < 0.15 && freezeFrames == 0 { kind = .ice }
+        else if level >= 3 && roll > 0.88 { kind = .bomb }
+        if spawnCount <= 3 { kind = .normal }
+
+        let x = 30 + CGFloat(duelRoll()) * (bounds.width - 60)
+        var speed = (1.5 + CGFloat(level - 1) * 0.18) * (0.85 + CGFloat(duelRoll()) * 0.30)
+        if spawnCount <= 3 { speed *= 0.8 }
+        if kind == .golden { speed *= 1.35 }
+
+        bananas.append(GameBanana(
+            character: char,
+            position: CGPoint(x: x, y: bounds.height - 20),
+            speed: speed,
+            kind: kind,
+            wobblePhase: CGFloat(duelRoll()) * .pi * 2
+        ))
+    }
+
+    /// End-of-wave boss: a giant bunch with a long word, falling slowly
+    /// from the top center. Type it all before it lands (+20, +1 life)
+    /// or lose two lives.
+    private func spawnBoss() {
+        let word = randomBossWord()
+        bananas.append(GameBanana(
+            character: word.first ?? "B",
+            position: CGPoint(x: bounds.width / 2, y: bounds.height + 20),
+            speed: 0.55,
+            kind: .boss,
+            wobblePhase: 0,
+            word: word
+        ))
+        bannerText = "👑"
+        bannerFrames = 60
+        shakeImpulse(4)
+        onPlayLevelUpSound?()
+    }
+
     private func endGame() {
         isGameOver = true
         gameOverFrame = 0
@@ -648,7 +860,15 @@ final class GameView: NSView {
         onPlayGameOverSound?()
         onGameOver?()
 
-        if !isZenMode {
+        if isDuelMode {
+            // Duel scores live in their own weekly ladder
+            let duelKey = "MonkeysDuelBest_\(Self.currentWeekTag())"
+            let previous = UserDefaults.standard.integer(forKey: duelKey)
+            lastRunDelta = previous > 0 ? score - previous : nil
+            if score > previous {
+                UserDefaults.standard.set(score, forKey: duelKey)
+            }
+        } else if !isZenMode {
             // Delta vs previous run — the "one more try" hook
             let previous = UserDefaults.standard.integer(forKey: "MonkeysLastGameScore")
             lastRunDelta = previous > 0 ? score - previous : nil
@@ -660,7 +880,7 @@ final class GameView: NSView {
             GameProgress.shared.registerScore(score)
         }
 
-        if score > highScore && !isZenMode {
+        if score > highScore && !isZenMode && !isDuelMode {
             highScore = score
             UserDefaults.standard.set(highScore, forKey: "MonkeysHighScore")
         }
@@ -675,7 +895,29 @@ final class GameView: NSView {
             // Z toggles Zen mode on the start screen; any other key starts
             if char == "z" || char == "Z" {
                 isZenMode.toggle()
+                if isZenMode { isDuelMode = false }
                 UserDefaults.standard.set(isZenMode, forKey: "MonkeysZenMode")
+                return
+            }
+            // D toggles the weekly duel (seeded, comparable run)
+            if char == "d" || char == "D" {
+                isDuelMode.toggle()
+                if isDuelMode {
+                    isZenMode = false
+                    UserDefaults.standard.set(false, forKey: "MonkeysZenMode")
+                }
+                return
+            }
+            // P cycles the color palette (locked ones are skipped)
+            if char == "p" || char == "P" {
+                let unlockedScore = GameProgress.shared.medalScore
+                var next = palette
+                for _ in 0..<GamePalette.allCases.count {
+                    next = GamePalette(rawValue: (next.rawValue + 1) % GamePalette.allCases.count) ?? .jungle
+                    if unlockedScore >= next.requiredMedalScore { break }
+                }
+                palette = next
+                UserDefaults.standard.set(palette.rawValue, forKey: "MonkeysGamePalette")
                 return
             }
             isWaitingToStart = false
@@ -683,6 +925,17 @@ final class GameView: NSView {
             return
         }
         if isGameOver {
+            // In duel, C copies a shareable score line to the clipboard
+            if isDuelMode && (char == "c" || char == "C") {
+                let week = Self.currentWeekTag() % 100
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString("MonKeys ⚔️ Duel #\(week): \(score) 🍌", forType: .string)
+                scorePopups.append(ScorePopup(position: CGPoint(x: bounds.width / 2, y: bounds.height / 2 - 60),
+                                              text: "📋 ✓", framesRemaining: 40, totalFrames: 40))
+                onPlayTick?()
+                return
+            }
             if gameOverFrame >= 45 { resetGame() }
             return
         }
@@ -702,7 +955,7 @@ final class GameView: NSView {
         let upper = Character(String(char).uppercased())
 
         // 1) A word bunch already in progress captures the input first
-        if let wIdx = bananas.firstIndex(where: { $0.kind == .word && $0.typedCount > 0 }) {
+        if let wIdx = bananas.firstIndex(where: { ($0.kind == .word || $0.kind == .boss) && $0.typedCount > 0 }) {
             if let word = bananas[wIdx].word {
                 let letters = Array(word)
                 if bananas[wIdx].typedCount < letters.count && letters[bananas[wIdx].typedCount] == upper {
@@ -717,7 +970,7 @@ final class GameView: NSView {
             }
         }
 
-        if let idx = bananas.firstIndex(where: { $0.kind != .word && $0.character == upper }) {
+        if let idx = bananas.firstIndex(where: { $0.kind != .word && $0.kind != .boss && $0.character == upper }) {
             let banana = bananas[idx]
             let pos = banana.position
             bananas.remove(at: idx)
@@ -743,6 +996,7 @@ final class GameView: NSView {
             }
 
             comboCount += 1
+            waveCaught += 1
             let multiplier = min(comboCount >= 3 ? comboCount - 1 : 1, 5)
             let feverBonus = isFever ? 2 : 1
 
@@ -761,7 +1015,7 @@ final class GameView: NSView {
                 popupText = "❄️"
                 freezeFrames = freezeDuration
                 onPlayGoldenSound?()
-            case .normal, .bomb, .word:
+            case .normal, .bomb, .word, .boss:
                 points = multiplier * feverBonus
                 popupText = feverBonus > 1 ? "+\(points) ⚡" : (multiplier > 1 ? "+\(points) 🔥" : "+1")
             }
@@ -794,7 +1048,7 @@ final class GameView: NSView {
                     onPlaySuccessSound?()
                 }
             }
-        } else if let wIdx = bananas.firstIndex(where: { $0.kind == .word && $0.word?.first == upper }) {
+        } else if let wIdx = bananas.firstIndex(where: { ($0.kind == .word || $0.kind == .boss) && $0.word?.first == upper }) {
             // 3) Start typing a word bunch
             advanceWordBunch(at: wIdx)
         } else {
@@ -813,18 +1067,26 @@ final class GameView: NSView {
 
         guard bananas[index].typedCount >= word.count else { return }
 
-        // Word complete: worth its length, with combo and fever multipliers
+        // Word complete: worth its length, with combo and fever multipliers.
+        // A boss is worth a flat 20 and heals one life.
         let banana = bananas[index]
         let pos = banana.position
+        let isBoss = banana.kind == .boss
         bananas.remove(at: index)
 
         let multiplier = min(comboCount >= 3 ? comboCount - 1 : 1, 5)
         let feverBonus = isFever ? 2 : 1
-        let points = word.count * max(1, multiplier) * feverBonus
+        let points = isBoss ? 20 * feverBonus : word.count * max(1, multiplier) * feverBonus
         score += points
-        hitStopFrames = 2
+        waveCaught += 1
+        hitStopFrames = isBoss ? 4 : 2
+        if isBoss {
+            if lives < 5 { lives += 1 }
+            onPlayGoldenSound?()
+        }
 
-        flyingCatches.append(FlyingCatch(from: pos, kind: .word, t: 0, popupText: "+\(points) 🍌"))
+        flyingCatches.append(FlyingCatch(from: pos, kind: banana.kind, t: 0,
+                                         popupText: isBoss ? "+\(points) 👑" : "+\(points) 🍌"))
         monkeyTargetX = pos.x
         monkeyBounceFrames = 15
         monkeyPose = .reach
@@ -839,10 +1101,12 @@ final class GameView: NSView {
             onPlayLevelUpSound?()
         }
 
-        if comboCount >= 3 {
-            onPlayComboSound?(comboCount)
-        } else {
-            onPlaySuccessSound?()
+        if !isBoss {
+            if comboCount >= 3 {
+                onPlayComboSound?(comboCount)
+            } else {
+                onPlaySuccessSound?()
+            }
         }
     }
 
@@ -980,6 +1244,11 @@ final class GameView: NSView {
         // Draw HUD
         drawHUD(ctx: ctx, w: w, h: h)
 
+        // Wave scorecard between waves
+        if intermissionFrames > 0 {
+            drawWaveScorecard(ctx: ctx, w: w, h: h)
+        }
+
         // Level-up banner
         if bannerFrames > 0 {
             drawLevelBanner(ctx: ctx, w: w, h: h)
@@ -1018,12 +1287,30 @@ final class GameView: NSView {
             )
         }
 
-        // Override to night for start/gameover screens
+        // Cosmetic palette overrides (menu screens keep the night look)
+        var paletteColors: (top: NSColor, bottom: NSColor)?
+        switch palette {
+        case .jungle:
+            paletteColors = nil
+        case .sunset:
+            paletteColors = (NSColor(red: 0.30, green: 0.12, blue: 0.40, alpha: 1.0),
+                             NSColor(red: 0.96, green: 0.52, blue: 0.24, alpha: 1.0))
+        case .synthwave:
+            paletteColors = (NSColor(red: 0.09, green: 0.04, blue: 0.28, alpha: 1.0),
+                             NSColor(red: 0.80, green: 0.14, blue: 0.52, alpha: 1.0))
+        case .mono:
+            paletteColors = (NSColor(white: 0.07, alpha: 1.0),
+                             NSColor(white: 0.30, alpha: 1.0))
+        }
+
         let topColor: NSColor
         let bottomColor: NSColor
         if isWaitingToStart || isGameOver {
             topColor = NSColor(red: 0.03, green: 0.02, blue: 0.12, alpha: 1.0)
             bottomColor = NSColor(red: 0.08, green: 0.05, blue: 0.20, alpha: 1.0)
+        } else if let pc = paletteColors {
+            topColor = pc.top
+            bottomColor = pc.bottom
         } else {
             topColor = colors.top
             bottomColor = colors.bottom
@@ -1197,8 +1484,8 @@ final class GameView: NSView {
 
     private func drawGround(ctx: CGContext, w: CGFloat) {
         let groundH: CGFloat = 70.0
-        let grassTop: NSColor
-        let grassBottom: NSColor
+        var grassTop: NSColor
+        var grassBottom: NSColor
 
         switch timeOfDay {
         case .morning:
@@ -1213,6 +1500,21 @@ final class GameView: NSView {
         case .night:
             grassTop = NSColor(red: 0.08, green: 0.22, blue: 0.06, alpha: 1.0)
             grassBottom = NSColor(red: 0.04, green: 0.12, blue: 0.03, alpha: 1.0)
+        }
+
+        // Cosmetic palette ground overrides
+        switch palette {
+        case .jungle:
+            break
+        case .sunset:
+            grassTop = NSColor(red: 0.42, green: 0.22, blue: 0.26, alpha: 1.0)
+            grassBottom = NSColor(red: 0.22, green: 0.10, blue: 0.14, alpha: 1.0)
+        case .synthwave:
+            grassTop = NSColor(red: 0.26, green: 0.10, blue: 0.44, alpha: 1.0)
+            grassBottom = NSColor(red: 0.12, green: 0.05, blue: 0.24, alpha: 1.0)
+        case .mono:
+            grassTop = NSColor(white: 0.28, alpha: 1.0)
+            grassBottom = NSColor(white: 0.14, alpha: 1.0)
         }
 
         let gradient = CGGradient(
@@ -1286,6 +1588,12 @@ final class GameView: NSView {
                 glowColor = NSColor(red: 0.4, green: 0.95, blue: 0.45, alpha: pulse)
                 ctx.setFillColor(glowColor.cgColor)
                 ctx.fillEllipse(in: CGRect(x: x - 24, y: y - 24, width: 48, height: 48))
+            case .boss:
+                // Regal gold-red halo, unmistakably dangerous
+                let pulse = 0.30 + 0.18 * sin(CGFloat(frameCount) * 0.18)
+                glowColor = NSColor(red: 1.0, green: 0.55, blue: 0.1, alpha: pulse)
+                ctx.setFillColor(glowColor.cgColor)
+                ctx.fillEllipse(in: CGRect(x: x - 36, y: y - 36, width: 72, height: 72))
             case .normal:
                 switch timeOfDay {
                 case .morning, .afternoon:
@@ -1308,16 +1616,22 @@ final class GameView: NSView {
             case .bomb:   emoji = "💣"
             case .ice:    emoji = "❄️"
             case .word:   emoji = "🍌"; emojiSize = 32
+            case .boss:   emoji = "🍌"; emojiSize = 52
             }
             let bananaStr = emoji as NSString
             let bananaAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: emojiSize)]
             bananaStr.draw(at: NSPoint(x: x - emojiSize / 2 + 2, y: y - emojiSize / 2 + 2), withAttributes: bananaAttrs)
 
-            // Word bunch: progress badge (typed part green, rest white)
-            if banana.kind == .word, let word = banana.word {
+            // Word bunch / boss: progress badge (typed part green, rest white)
+            if banana.kind == .word || banana.kind == .boss, let word = banana.word {
+                let isBoss = banana.kind == .boss
+                if isBoss {
+                    ("👑" as NSString).draw(at: NSPoint(x: x - 11, y: y + 22),
+                                            withAttributes: [.font: NSFont.systemFont(ofSize: 22)])
+                }
                 let typed = String(word.prefix(banana.typedCount)) as NSString
                 let rest = String(word.dropFirst(banana.typedCount)) as NSString
-                let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .bold)
+                let font = NSFont.monospacedSystemFont(ofSize: isBoss ? 16 : 13, weight: .bold)
                 let typedAttrs: [NSAttributedString.Key: Any] = [
                     .font: font, .foregroundColor: NSColor(red: 0.35, green: 1.0, blue: 0.45, alpha: 1.0)]
                 let restAttrs: [NSAttributedString.Key: Any] = [
@@ -1325,7 +1639,7 @@ final class GameView: NSView {
                 let typedW = typed.size(withAttributes: typedAttrs).width
                 let restW = rest.size(withAttributes: restAttrs).width
                 let totalW = typedW + restW
-                let badgeRect = CGRect(x: x - totalW / 2 - 6, y: y - 36, width: totalW + 12, height: 19)
+                let badgeRect = CGRect(x: x - totalW / 2 - 6, y: y - (isBoss ? 54 : 36), width: totalW + 12, height: isBoss ? 22 : 19)
                 let badgePath = CGPath(roundedRect: badgeRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
                 ctx.setFillColor(NSColor(red: 0.05, green: 0.25, blue: 0.08, alpha: 0.9).cgColor)
                 ctx.addPath(badgePath)
@@ -1349,7 +1663,7 @@ final class GameView: NSView {
             case .ice:
                 badgeColor = NSColor(red: 0.1, green: 0.3, blue: 0.5, alpha: 0.9)
                 letterColor = NSColor(red: 0.8, green: 0.95, blue: 1.0, alpha: 1.0)
-            case .normal, .word:
+            case .normal, .word, .boss:
                 badgeColor = NSColor(red: 0.2, green: 0.2, blue: 0.2, alpha: 0.85)
                 letterColor = .white
             }
@@ -1799,8 +2113,68 @@ final class GameView: NSView {
         case .evening: timeEmoji = "🌇"
         case .night: timeEmoji = "🌙"
         }
-        (timeEmoji as NSString).draw(at: NSPoint(x: w - 30, y: h - 70),
-                                     withAttributes: [.font: NSFont.systemFont(ofSize: 13)])
+        let phaseStr = isDuelMode ?
+            "⚔️\(Self.currentWeekTag() % 100)" :
+            "\(timeEmoji) 🌊\(waveNumber)"
+        (phaseStr as NSString).draw(at: NSPoint(x: w - (isDuelMode ? 50 : 68), y: h - 70), withAttributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
+            .foregroundColor: NSColor(white: 0.9, alpha: 0.95),
+        ])
+
+        // Duel countdown (fixed 90s run)
+        if isDuelMode {
+            let remaining = max(0, Int((duelDuration - gameElapsedSeconds).rounded(.up)))
+            ("⏱ \(remaining)" as NSString).draw(at: NSPoint(x: 14, y: h - 86), withAttributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
+                .foregroundColor: NSColor(red: 0.5, green: 0.9, blue: 1.0, alpha: 0.95),
+            ])
+        }
+    }
+
+    /// Between-waves breather: what you did, what's coming.
+    private func drawWaveScorecard(ctx: CGContext, w: CGFloat, h: CGFloat) {
+        let cardRect = CGRect(x: w / 2 - 130, y: h / 2 - 58, width: 260, height: 120)
+        let cardPath = CGPath(roundedRect: cardRect, cornerWidth: 14, cornerHeight: 14, transform: nil)
+        ctx.setFillColor(NSColor(white: 0.06, alpha: 0.85).cgColor)
+        ctx.addPath(cardPath)
+        ctx.fillPath()
+        ctx.setStrokeColor(NSColor(white: 1.0, alpha: 0.14).cgColor)
+        ctx.setLineWidth(1)
+        ctx.addPath(cardPath)
+        ctx.strokePath()
+
+        let title = "🌊 \(L.shared.sf("g_wave", waveNumber)) ✓" as NSString
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: roundedFont(size: 19, weight: .heavy),
+            .foregroundColor: NSColor(red: 0.55, green: 0.85, blue: 1.0, alpha: 1.0),
+        ]
+        let ts = title.size(withAttributes: titleAttrs)
+        title.draw(at: NSPoint(x: w / 2 - ts.width / 2, y: h / 2 + 26), withAttributes: titleAttrs)
+
+        let stats = "✅ \(scorecardCaught)    ❌ \(scorecardMissed)" as NSString
+        let statsAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 16, weight: .bold),
+            .foregroundColor: NSColor.white,
+        ]
+        let ss = stats.size(withAttributes: statsAttrs)
+        stats.draw(at: NSPoint(x: w / 2 - ss.width / 2, y: h / 2 - 4), withAttributes: statsAttrs)
+
+        // What the next wave brings (phase emoji + modifier)
+        let nextPhase = TimeOfDay(rawValue: waveNumber % 4) ?? .morning
+        let nextEmoji: String
+        switch nextPhase {
+        case .morning:   nextEmoji = "🌅"
+        case .afternoon: nextEmoji = "☀️ 🍌🍌"
+        case .evening:   nextEmoji = "🌇 🌬"
+        case .night:     nextEmoji = "🌙 ⚡"
+        }
+        let next = "→  \(nextEmoji)" as NSString
+        let nextAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 15),
+            .foregroundColor: NSColor(white: 0.8, alpha: 0.95),
+        ]
+        let ns = next.size(withAttributes: nextAttrs)
+        next.draw(at: NSPoint(x: w / 2 - ns.width / 2, y: h / 2 - 36), withAttributes: nextAttrs)
     }
 
     // MARK: - Start Screen
@@ -1850,6 +2224,30 @@ final class GameView: NSView {
         ]
         let zenSize = zenStr.size(withAttributes: zenAttrs)
         zenStr.draw(at: NSPoint(x: w / 2 - zenSize.width / 2, y: h / 2 - 108), withAttributes: zenAttrs)
+
+        // Weekly duel toggle
+        let week = Self.currentWeekTag() % 100
+        let duelBase = "⚔️ \(L.shared.sf("g_duel_hint", week))"
+        let duelStr = (isDuelMode ? duelBase + "  ✓" : duelBase) as NSString
+        let duelAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: isDuelMode ?
+                NSColor(red: 0.5, green: 0.9, blue: 1.0, alpha: 0.95) :
+                NSColor(white: 0.55, alpha: 0.8),
+        ]
+        let duelSize = duelStr.size(withAttributes: duelAttrs)
+        duelStr.draw(at: NSPoint(x: w / 2 - duelSize.width / 2, y: h / 2 - 126), withAttributes: duelAttrs)
+
+        // Palette cycler (cosmetics unlocked with medals)
+        let nextPalette = GamePalette(rawValue: (palette.rawValue + 1) % GamePalette.allCases.count) ?? .jungle
+        let locked = GameProgress.shared.medalScore < nextPalette.requiredMedalScore
+        let palStr = "🎨 P · \(palette.displayName)\(locked ? "  (→ \(nextPalette.displayName) 🔒 \(nextPalette.requiredMedalScore)🏅)" : "")" as NSString
+        let palAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor(white: 0.55, alpha: 0.8),
+        ]
+        let palSize = palStr.size(withAttributes: palAttrs)
+        palStr.draw(at: NSPoint(x: w / 2 - palSize.width / 2, y: h / 2 - 144), withAttributes: palAttrs)
 
         // High score
         if highScore > 0 {
@@ -1957,13 +2355,25 @@ final class GameView: NSView {
             let lvlSize = lvlStr.size(withAttributes: lvlAttrs)
             lvlStr.draw(at: NSPoint(x: w / 2 - lvlSize.width / 2, y: h / 2 - 10), withAttributes: lvlAttrs)
 
-            let bestStr = L.shared.sf("g_best_score", highScore) as NSString
-            let bestAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 13),
-                .foregroundColor: NSColor(red: 1.0, green: 0.85, blue: 0.3, alpha: 0.9),
-            ]
-            let bestSize = bestStr.size(withAttributes: bestAttrs)
-            bestStr.draw(at: NSPoint(x: w / 2 - bestSize.width / 2, y: h / 2 - 32), withAttributes: bestAttrs)
+            if isDuelMode {
+                let week = Self.currentWeekTag() % 100
+                let duelBest = UserDefaults.standard.integer(forKey: "MonkeysDuelBest_\(Self.currentWeekTag())")
+                let duelStr = "⚔️ #\(week) · \(duelBest) — C 📋" as NSString
+                let duelAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold),
+                    .foregroundColor: NSColor(red: 0.5, green: 0.9, blue: 1.0, alpha: 0.95),
+                ]
+                let dsz = duelStr.size(withAttributes: duelAttrs)
+                duelStr.draw(at: NSPoint(x: w / 2 - dsz.width / 2, y: h / 2 - 32), withAttributes: duelAttrs)
+            } else {
+                let bestStr = L.shared.sf("g_best_score", highScore) as NSString
+                let bestAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 13),
+                    .foregroundColor: NSColor(red: 1.0, green: 0.85, blue: 0.3, alpha: 0.9),
+                ]
+                let bestSize = bestStr.size(withAttributes: bestAttrs)
+                bestStr.draw(at: NSPoint(x: w / 2 - bestSize.width / 2, y: h / 2 - 32), withAttributes: bestAttrs)
+            }
         }
 
         // Medal stamp with scale-in (frame 78+)

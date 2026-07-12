@@ -453,6 +453,22 @@ final class L: @unchecked Sendable {
                 .zh: "15秒一口气 — 立即重来",
                 .ko: "15초 한 호흡 — 바로 재시작",
             ],
+            "g_wave": [
+                .en: "Wave %d", .it: "Ondata %d", .es: "Oleada %d",
+                .fr: "Vague %d", .de: "Welle %d", .pt: "Onda %d",
+                .ja: "ウェーブ %d", .zh: "第%d波", .ko: "웨이브 %d",
+            ],
+            "g_duel_hint": [
+                .en: "D — Weekly duel #%d (same run for everyone)",
+                .it: "D — Duello settimanale #%d (stessa run per tutti)",
+                .es: "D — Duelo semanal #%d (misma partida para todos)",
+                .fr: "D — Duel hebdo #%d (même partie pour tous)",
+                .de: "D — Wochen-Duell #%d (gleicher Lauf für alle)",
+                .pt: "D — Duelo semanal #%d (mesma partida para todos)",
+                .ja: "D — 週間デュエル #%d（全員同じラン）",
+                .zh: "D — 每周对决 #%d（人人相同关卡）",
+                .ko: "D — 주간 듀얼 #%d (모두 같은 런)",
+            ],
             "st_drill": [
                 .en: "Weak Keys", .it: "Tasti Deboli", .es: "Teclas Débiles",
                 .fr: "Touches Faibles", .de: "Schwache Tasten", .pt: "Teclas Fracas",

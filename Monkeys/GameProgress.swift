@@ -88,6 +88,12 @@ final class GameProgress {
         Medal(rawValue: defaults.integer(forKey: "MonkeysMedal_\(mode)")) ?? .none
     }
 
+    /// Sum of best-medal values across all modes (gold=3): currency for
+    /// the cosmetic palette unlocks. Max 9 with the current three modes.
+    var medalScore: Int {
+        ["bananas", "speed", "speed_sprint"].reduce(0) { $0 + bestMedal(mode: $1).rawValue }
+    }
+
     // MARK: - Play streak
 
     private(set) var currentStreak: Int {
