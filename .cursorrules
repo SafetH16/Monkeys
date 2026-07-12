@@ -20,6 +20,7 @@ Whenever you update the application code, you must compile, commit, and deploy t
   6. Create a GitHub Release for that tag, and upload `MonKeys.zip` as a release asset.
 
 ## ⚠️ Important Guidelines
-* **Do NOT leak credentials:** The updater is anonymous (public GitHub Releases API). Never embed tokens, keys or secrets anywhere in the repository or the binary — anything compiled in can be extracted with `strings`.
+* **Do NOT commit credentials:** The updater token lives ONLY in the untracked `.updater_token` file; `build.sh` injects it into the generated, gitignored `Monkeys/UpdaterToken.swift`. Never hardcode tokens in Swift sources or commit them — anything compiled in can be extracted with `strings`, and anything committed stays in git history forever.
+* **One visible app:** the app is installed in `/Applications/MonKeys.app`. After installing an update, delete `build/MonKeys.app` so Spotlight/Launchpad show a single copy. Every reinstall invalidates the Accessibility grant (ad-hoc signature): re-grant it in System Settings.
 * **Keep Swift 6 Concurrency:** Ensure all code remains strict-concurrency safe. AppDelegate is `@MainActor` isolated. All background work or nonisolated timers (e.g. `Timer.scheduledTimer`) must delegate UI tasks using `Task { @MainActor [weak self] in ... }` blocks.
 * **Release Asset Naming:** The release asset name must always be `MonKeys.zip` for the auto-updater to work.

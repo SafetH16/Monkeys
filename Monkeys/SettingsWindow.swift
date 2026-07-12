@@ -19,6 +19,8 @@ final class SettingsWindow: NSWindow {
     private let profileManager: AppProfileManager
     private let typingStats: TypingStats
     private let keyboardMonitor: KeyboardMonitor
+    private let deviceRuleStore: DeviceRuleStore
+    private let audioMonitor: AudioOutputMonitor
 
     /// Called after any change that the menu bar must reflect
     /// (enabled state, volume, profile, music…).
@@ -60,6 +62,12 @@ final class SettingsWindow: NSWindow {
     private var statsCheck: NSButton!
     private var languagePopup: NSPopUpButton!
 
+    private var devicePopups: [NSPopUpButton] = []
+    private var currentOutputLabel: NSTextField!
+
+    /// Called after a device rule changes so the app can recompose the state.
+    var onDeviceRulesChanged: (() -> Void)?
+
     private let builtinProfiles: [SoundProfile] = [
         .blue, .brown, .red, .black, .silentRed, .speedSilver,
         .gateronRed, .gateronYellow, .silentBlack,
@@ -73,12 +81,16 @@ final class SettingsWindow: NSWindow {
          presetStore: SoundProfileStore,
          profileManager: AppProfileManager,
          typingStats: TypingStats,
-         keyboardMonitor: KeyboardMonitor) {
+         keyboardMonitor: KeyboardMonitor,
+         deviceRuleStore: DeviceRuleStore,
+         audioMonitor: AudioOutputMonitor) {
         self.engine = engine
         self.presetStore = presetStore
         self.profileManager = profileManager
         self.typingStats = typingStats
         self.keyboardMonitor = keyboardMonitor
+        self.deviceRuleStore = deviceRuleStore
+        self.audioMonitor = audioMonitor
 
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 500),
@@ -93,6 +105,7 @@ final class SettingsWindow: NSWindow {
         tabView.addTabViewItem(makeTab("General", view: buildGeneralTab()))
         tabView.addTabViewItem(makeTab("Sound", view: buildSoundTab()))
         tabView.addTabViewItem(makeTab("App Profiles", view: buildRulesTab()))
+        tabView.addTabViewItem(makeTab("Devices", view: buildDevicesTab()))
         tabView.addTabViewItem(makeTab("Privacy", view: buildPrivacyTab()))
 
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 500))
@@ -129,6 +142,7 @@ final class SettingsWindow: NSWindow {
         let (code, flags) = keyboardMonitor.currentShortcut
         shortcutLabel.stringValue = stringForShortcut(keyCode: code, flags: flags)
         statsCheck.state = AppSettings.statsEnabled ? .on : .off
+        refreshDevicesTab()
     }
 
     // MARK: - General tab
@@ -618,6 +632,106 @@ final class SettingsWindow: NSWindow {
     private func reloadRulesTable() {
         rulesTable.reloadData()
         syncRuleDetailControls()
+    }
+
+    // MARK: - Devices tab
+
+    /// Popup indices: 0 = no rule, 1 = mute, 2/3/4 = volume 25/50/75%.
+    private static let deviceVolumeSteps = [25, 50, 75]
+
+    private func buildDevicesTab() -> NSView {
+        let v = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 430))
+
+        let title = NSTextField(labelWithString: "Rules by audio output")
+        title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        title.frame = NSRect(x: 30, y: 388, width: 300, height: 20)
+        v.addSubview(title)
+
+        let intro = NSTextField(wrappingLabelWithString:
+            "MonKeys knows where your sound is going. Give each kind of output its own behavior — for example mute on the built-in speakers, full volume in your headphones.")
+        intro.font = NSFont.systemFont(ofSize: 11)
+        intro.textColor = .secondaryLabelColor
+        intro.frame = NSRect(x: 30, y: 330, width: 460, height: 52)
+        v.addSubview(intro)
+
+        currentOutputLabel = NSTextField(labelWithString: "")
+        currentOutputLabel.font = NSFont.systemFont(ofSize: 11)
+        currentOutputLabel.textColor = .secondaryLabelColor
+        currentOutputLabel.frame = NSRect(x: 30, y: 300, width: 460, height: 18)
+        v.addSubview(currentOutputLabel)
+
+        devicePopups = []
+        for (i, category) in AudioOutputCategory.allCases.enumerated() {
+            let y = 252 - CGFloat(i) * 40
+
+            let label = NSTextField(labelWithString: category.settingsLabel)
+            label.frame = NSRect(x: 30, y: y + 4, width: 190, height: 20)
+            v.addSubview(label)
+
+            let popup = NSPopUpButton(frame: NSRect(x: 230, y: y, width: 190, height: 28))
+            popup.addItem(withTitle: "No rule")
+            popup.addItem(withTitle: "Mute")
+            for step in Self.deviceVolumeSteps {
+                popup.addItem(withTitle: "Volume \(step)%")
+            }
+            popup.tag = i
+            popup.target = self
+            popup.action = #selector(deviceRuleChanged(_:))
+            v.addSubview(popup)
+            devicePopups.append(popup)
+        }
+
+        let note = NSTextField(wrappingLabelWithString:
+            "Device rules sit below app rules: when both match, the app rule wins. Manually unmuting during an auto-mute keeps sounds on until you switch app.")
+        note.font = NSFont.systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.frame = NSRect(x: 30, y: 60, width: 460, height: 48)
+        v.addSubview(note)
+
+        refreshDevicesTab()
+        return v
+    }
+
+    /// Refreshes the current-output line and popup selections.
+    func refreshDevicesTab() {
+        guard currentOutputLabel != nil else { return }
+        let current = audioMonitor.current
+        currentOutputLabel.stringValue = current.name.isEmpty
+            ? "Current output: —"
+            : "Current output: \(current.name) (\(current.category.settingsLabel))"
+
+        for (i, category) in AudioOutputCategory.allCases.enumerated() {
+            let popup = devicePopups[i]
+            guard let rule = deviceRuleStore.rule(for: category) else {
+                popup.selectItem(at: 0)
+                continue
+            }
+            if rule.muted {
+                popup.selectItem(at: 1)
+            } else if let volume = rule.volume {
+                // Snap stored volume to the nearest popup step.
+                let nearest = Self.deviceVolumeSteps.enumerated()
+                    .min(by: { abs($0.element - volume) < abs($1.element - volume) })?.offset ?? 1
+                popup.selectItem(at: 2 + nearest)
+            } else {
+                popup.selectItem(at: 0)
+            }
+        }
+    }
+
+    @objc private func deviceRuleChanged(_ sender: NSPopUpButton) {
+        guard sender.tag >= 0 && sender.tag < AudioOutputCategory.allCases.count else { return }
+        let category = AudioOutputCategory.allCases[sender.tag]
+        switch sender.indexOfSelectedItem {
+        case 0:
+            deviceRuleStore.set(nil, for: category)
+        case 1:
+            deviceRuleStore.set(DeviceRule(muted: true, volume: nil), for: category)
+        default:
+            let step = Self.deviceVolumeSteps[max(0, sender.indexOfSelectedItem - 2)]
+            deviceRuleStore.set(DeviceRule(muted: false, volume: step), for: category)
+        }
+        onDeviceRulesChanged?()
     }
 
     private var selectedRule: PerAppRule? {

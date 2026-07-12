@@ -3,6 +3,17 @@
 All notable changes to MonKeys are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.0.0] — 2026-07-13
+
+### Added
+- **Device awareness**: MonKeys now knows where its sound is going. The menu shows the current audio output under the volume slider, and the status header explains device-based decisions.
+- **Rules by audio output** (Settings → Devices): mute or set a volume per output category — built-in speakers, Bluetooth headphones, USB & other. Priority: manual mute > unmute override > meeting > app rule > device rule > global.
+- **Mascot glyph**: a line-art monkey holding a keyring of keycaps in the menu header and onboarding — drawn in code, template, adapts to light/dark.
+
+### Fixed
+- **Key sounds no longer die when the output device changes** (connecting AirPods, unplugging headphones…): the audio engine reconnects with the new hardware format and restarts automatically.
+- **Auto-updater works with the private repository**: authenticated API checks, correct asset download (API asset URL with credential-stripping on the storage redirect), clear error reporting, and update dialogs localized in all 9 languages. The token is injected at build time from an untracked file and never enters the repository.
+
 ## [1.9.0] — 2026-07-12
 
 ### Added

@@ -41,6 +41,7 @@ struct AppSoundState {
 enum AutoMuteReason {
     case meeting
     case appRule
+    case deviceRule
 }
 
 final class AppProfileManager: @unchecked Sendable {

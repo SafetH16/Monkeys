@@ -11,7 +11,7 @@ Procedurally synthesized key sounds · per-app profiles · typing games · zero 
 [![Build](https://github.com/SafetH16/Monkeys/actions/workflows/build.yml/badge.svg)](https://github.com/SafetH16/Monkeys/actions/workflows/build.yml)
 ![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-111111?logo=apple&logoColor=white)
-![Version](https://img.shields.io/badge/version-1.9.0-4B8BBE)
+![Version](https://img.shields.io/badge/version-2.0.0-4B8BBE)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
 [Install](#install) · [Features](#features) · [Privacy & security](#privacy--security) · [Build from source](#build-from-source) · [Changelog](CHANGELOG.md)
@@ -31,6 +31,7 @@ Procedurally synthesized key sounds · per-app profiles · typing games · zero 
 | 🔊 **Procedural sound engine** | 18 built-in switch voices (Clicky Blue, Tactile Brown, Linear Red, Deep Thock, Silent Office, Terminal…), 16-voice polyphony, stereo panning by physical key position, ±2% pitch / ±5% gain natural variation |
 | 🎛 **Preset editor** | 8 synthesis parameters with live preview, user presets, validated JSON import/export |
 | 🪟 **Per-app profiles** | One rule per app: mute, force a voice, custom volume — applied the instant you switch apps |
+| 🎧 **Device awareness** | Knows where the sound is going: per-output rules (mute on speakers, full volume in headphones), current output shown in the menu, engine survives device switches |
 | 🤫 **Meeting mode** | Auto-mutes when Zoom, Teams, FaceTime & co. come to the front (configurable whitelist) |
 | 🧘 **Focus & Game modes** | One-click quiet profile at low volume, or boosted WASD/Space for gaming |
 | 🎮 **Typing games** | *Save the Bananas* (waves, boss bananas, weekly duel, unlockable palettes) and *Speed Challenge* (5 difficulties + weak-key drill, ghost curve, flow tiers with dynamic music) |
@@ -81,7 +82,9 @@ In **Settings → Sound** you can edit 8 synthesis parameters (loudness, pitch, 
 
 **Meeting mode** is intentionally best-effort: it reacts to the frontmost app matching a configurable whitelist (Zoom, Teams, FaceTime, Skype, Slack, Webex, Discord by default). MonKeys does **not** access your microphone, screen or other apps' content, so it cannot know with certainty that a call is active.
 
-Priority, highest first: manual mute → manual unmute override (holds until you switch apps) → meeting mode → app rule → global settings.
+**Device rules** (Settings → Devices) add one more layer: mute or set a volume per output category — built-in speakers, Bluetooth headphones, USB & other. Typing sounds through MacBook speakers in an office and through your AirPods are different experiences; MonKeys treats them differently. The menu always shows the current output under the volume slider.
+
+Priority, highest first: manual mute → manual unmute override (holds until you switch apps) → meeting mode → app rule → device rule → global settings.
 
 ## Games
 

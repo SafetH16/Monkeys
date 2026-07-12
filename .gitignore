@@ -4,3 +4,5 @@ build/
 *.mp3
 !Monkeys/bg_music.mp3
 *.log
+.updater_token
+Monkeys/UpdaterToken.swift

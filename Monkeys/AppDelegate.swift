@@ -22,10 +22,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var visualizerPanel: VisualizerPanel?
     private let presetStore = SoundProfileStore()
 
-    /// True while sounds are muted by a meeting/app rule (not by the user).
+    /// True while sounds are muted by a meeting/app/device rule (not by the user).
     private var isAutoMuted = false
     private var isFocusMode = false
     private var isGameMode = false
+
+    // Device awareness: where the audio is going right now, and the rules
+    // that depend on it. `lastAppState` caches the app/meeting layer so the
+    // final state can be recomposed when only the output device changes.
+    private let audioMonitor = AudioOutputMonitor()
+    private let deviceRuleStore = DeviceRuleStore()
+    private var lastAppState = AppSoundState(autoMuted: false, profileRaw: nil, volume: nil, reason: nil)
 
     // The menu is rebuilt on every open (menuNeedsUpdate), so almost no
     // item references are needed. The slider label survives while dragging.
@@ -110,6 +117,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         appProfileManager.start()
 
+        // 5b. Watch the default audio output device (AirPods vs speakers…):
+        // recompose the sound state whenever it changes.
+        audioMonitor.onChange = {
+            Task { @MainActor [weak self] in
+                self?.applyEffectiveState()
+            }
+        }
+        audioMonitor.start()
+
         // 6. Housekeeping timer: peak-WPM tracking + batched stats flush.
         // (The menu needs no timer: it rebuilds itself on every open.)
         wpmTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -120,10 +136,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        // 6b. Apply persisted audio settings (the menu no longer does this)
-        soundEngine.setVolume(Float(AppSettings.volume) / 100.0)
+        // 6b. Apply persisted audio settings (the menu no longer does this).
+        // reevaluate() feeds the frontmost app through the full state
+        // composition, so rules and device layers apply from the first key.
         soundEngine.setMusicEnabled(AppSettings.musicEnabled)
-        restoreUserVoice()
+        appProfileManager.reevaluate()
         
         // 7. Restore the keyboard visualizer if it was visible last session
         if UserDefaults.standard.bool(forKey: SettingsKey.visualizerVisible) {
@@ -208,7 +225,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
 
         // ── Status block: state + typing at a glance ──
-        menu.addItem(infoItem(statusLine(), size: 12, bold: true))
+        let header = infoItem(statusLine(), size: 12, bold: true)
+        header.image = MascotIcon.glyph(size: 18)
+        menu.addItem(header)
         let wpm = wpmTracker.currentWPM()
         let today = typingStats.formatNumber(typingStats.getTodayCount())
         menu.addItem(infoItem(L.shared.sf("status_typing", wpm, today), size: 11, bold: false))
@@ -275,8 +294,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let front = appProfileManager.frontmostApp?.name ?? "—"
         let prefix = "MonKeys — "
         if isAutoMuted {
-            let key = lastAutoMuteReason == .appRule ? "status_muted_rule" : "status_muted_meeting"
-            return prefix + L.shared.sf(key, front)
+            switch lastAutoMuteReason {
+            case .deviceRule:
+                return prefix + L.shared.sf("status_muted_device", audioMonitor.current.name)
+            case .appRule:
+                return prefix + L.shared.sf("status_muted_rule", front)
+            default:
+                return prefix + L.shared.sf("status_muted_meeting", front)
+            }
         }
         if !isEnabled {
             return prefix + L.shared.s("status_paused")
@@ -333,14 +358,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func volumeSliderItem() -> NSMenuItem {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 230, height: 26))
+        // A second line under the slider names the current output device —
+        // that volume is going somewhere, and the menu should say where.
+        let deviceName = audioMonitor.current.name
+        let hasDevice = !deviceName.isEmpty
+        let height: CGFloat = hasDevice ? 40 : 26
+        let rowY: CGFloat = hasDevice ? 17 : 3
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 230, height: height))
 
-        let iconView = NSImageView(frame: NSRect(x: 14, y: 5, width: 16, height: 16))
+        let iconView = NSImageView(frame: NSRect(x: 14, y: rowY + 2, width: 16, height: 16))
         iconView.image = symbol("speaker.wave.2.fill")
         iconView.contentTintColor = .secondaryLabelColor
         container.addSubview(iconView)
 
-        let slider = NSSlider(frame: NSRect(x: 36, y: 3, width: 138, height: 20))
+        let slider = NSSlider(frame: NSRect(x: 36, y: rowY, width: 138, height: 20))
         slider.minValue = 0
         slider.maxValue = 100
         slider.integerValue = AppSettings.volume
@@ -352,9 +383,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         label.textColor = .secondaryLabelColor
         label.alignment = .right
-        label.frame = NSRect(x: 178, y: 5, width: 40, height: 16)
+        label.frame = NSRect(x: 178, y: rowY + 2, width: 40, height: 16)
         container.addSubview(label)
         volumeSliderLabel = label
+
+        if hasDevice {
+            let deviceLabel = NSTextField(labelWithString: L.shared.sf("menu_on_device", deviceName))
+            deviceLabel.font = .systemFont(ofSize: 10)
+            deviceLabel.textColor = .tertiaryLabelColor
+            deviceLabel.lineBreakMode = .byTruncatingTail
+            deviceLabel.frame = NSRect(x: 37, y: 3, width: 180, height: 13)
+            container.addSubview(deviceLabel)
+        }
 
         let item = NSMenuItem()
         item.view = container
@@ -507,25 +547,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateStatusItem()
     }
 
-    /// Applies the state requested by AppProfileManager for the frontmost app.
-    /// Global manual mute always wins; auto-mute never flips `isEnabled`.
+    /// Caches the app/meeting layer from AppProfileManager and recomposes.
     private func applyAppSoundState(_ state: AppSoundState) {
-        isAutoMuted = state.autoMuted
-        lastAutoMuteReason = state.reason
+        lastAppState = state
+        applyEffectiveState()
+    }
 
-        // Volume: per-app override or the user's global setting (focus scales it).
-        let baseVolume = state.volume ?? AppSettings.volume
+    /// Composes the final sound state from every layer. Priority, highest
+    /// first: global manual mute > manual unmute override > meeting >
+    /// app rule > device rule > global settings. Auto-mute never flips
+    /// `isEnabled`.
+    private func applyEffectiveState() {
+        let state = lastAppState
+        let deviceRule = deviceRuleStore.rule(for: audioMonitor.current.category)
+
+        var autoMuted = state.autoMuted
+        var reason = state.reason
+        if !autoMuted, let deviceRule, deviceRule.muted, !appProfileManager.isOverrideActive {
+            autoMuted = true
+            reason = .deviceRule
+        }
+        isAutoMuted = autoMuted
+        lastAutoMuteReason = autoMuted ? reason : nil
+
+        // Volume: app rule > device rule > global (focus scales the result).
+        let baseVolume = state.volume ?? deviceRule?.volume ?? AppSettings.volume
         let scale: Float = isFocusMode ? 0.3 : 1.0
         soundEngine.setVolume(Float(baseVolume) / 100.0 * scale)
 
-        // Voice: per-app override or the user's chosen voice.
-        if let raw = state.profileRaw, let ruleProfile = SoundProfile(rawValue: raw) {
+        // Voice: focus forces the quiet voice, then app rule, then the user's.
+        if isFocusMode {
+            soundEngine.setProfile(.silentOffice)
+        } else if let raw = state.profileRaw, let ruleProfile = SoundProfile(rawValue: raw) {
             soundEngine.setProfile(ruleProfile)
-        } else if !isFocusMode {
+        } else {
             restoreUserVoice()
         }
 
-        soundEngine.setEnabled(isEnabled && !state.autoMuted)
+        soundEngine.setEnabled(isEnabled && !autoMuted)
 
         updateStatusItem()
     }
@@ -546,13 +605,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleFocusMode() {
         isFocusMode.toggle()
-        if isFocusMode {
-            soundEngine.setProfile(.silentOffice)
-            soundEngine.setVolume(Float(AppSettings.volume) / 100.0 * 0.3)
-        } else {
-            restoreUserVoice()
-            soundEngine.setVolume(Float(AppSettings.volume) / 100.0)
-        }
+        applyEffectiveState()
     }
 
     @objc private func toggleGameMode() {
@@ -618,8 +671,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 presetStore: presetStore,
                 profileManager: appProfileManager,
                 typingStats: typingStats,
-                keyboardMonitor: keyboardMonitor
+                keyboardMonitor: keyboardMonitor,
+                deviceRuleStore: deviceRuleStore,
+                audioMonitor: audioMonitor
             )
+            window.onDeviceRulesChanged = { [weak self] in
+                self?.applyEffectiveState()
+            }
             window.isSoundsEnabled = { [weak self] in self?.isEnabled ?? true }
             window.onSetSoundsEnabled = { [weak self] enabled in
                 guard let self else { return }

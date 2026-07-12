@@ -34,12 +34,11 @@ final class OnboardingWindow: NSWindow {
     private func setupViews() {
         guard let content = self.contentView else { return }
 
-        // Big app glyph
-        let iconLabel = NSTextField(labelWithString: "🐒⌨️")
-        iconLabel.font = NSFont.systemFont(ofSize: 44)
-        iconLabel.alignment = .center
-        iconLabel.frame = NSRect(x: 20, y: 290, width: 400, height: 56)
-        content.addSubview(iconLabel)
+        // Big app glyph — the mascot, large enough for the keyring to read
+        let iconView = NSImageView(frame: NSRect(x: 192, y: 290, width: 56, height: 56))
+        iconView.image = MascotIcon.glyph(size: 56)
+        iconView.contentTintColor = .labelColor
+        content.addSubview(iconView)
 
         // Title
         let titleLabel = NSTextField(labelWithString: L.shared.s("ob_title"))

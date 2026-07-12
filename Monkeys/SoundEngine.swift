@@ -105,6 +105,32 @@ final class SoundEngine: @unchecked Sendable {
 
         engine.connect(mixer, to: engine.outputNode, format: engine.outputNode.inputFormat(forBus: 0))
         mixer.outputVolume = volume
+
+        // When the default output device changes (AirPods connect, cable
+        // pulled…) the engine stops and the mixer→output connection keeps the
+        // old hardware format. Reconnect with the fresh format and restart,
+        // otherwise key sounds stay dead until relaunch.
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+        ) { [weak self] _ in
+            self?.handleConfigurationChange()
+        }
+    }
+
+    private var configObserver: NSObjectProtocol?
+
+    private func handleConfigurationChange() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        for player in playerNodes { player.stop() }
+        pressedKeys.removeAll()
+        engine.connect(mixer, to: engine.outputNode, format: engine.outputNode.inputFormat(forBus: 0))
+        do {
+            try engine.start()
+        } catch {
+            print("SoundEngine: restart after output device change failed — \(error)")
+        }
     }
 
     // MARK: - Lifecycle

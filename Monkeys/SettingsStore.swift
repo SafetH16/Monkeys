@@ -28,6 +28,9 @@ enum SettingsKey {
     static let perAppRules         = "MonkeysPerAppRules"
     static let meetingApps         = "MonkeysMeetingApps"
 
+    // Per-output-device rules (JSON-encoded, keyed by AudioOutputCategory)
+    static let deviceRules         = "MonkeysDeviceRules"
+
     // Statistics
     static let todayKeyCount       = "MonkeysTodayKeyCount"
     static let todayDate           = "MonkeysTodayDate"
