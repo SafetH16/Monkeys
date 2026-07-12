@@ -1,0 +1,28 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only token: this workflow only compiles the app; it never publishes
+# releases, never signs, and needs no secrets.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Compile MonKeys (arm64, Swift 6)
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: ./build.sh
+
+      - name: Verify bundle structure
+        run: |
+          test -x "build/MonKeys.app/Contents/MacOS/MonKeys"
+          test -f "build/MonKeys.app/Contents/Info.plist"
+          echo "Bundle OK"

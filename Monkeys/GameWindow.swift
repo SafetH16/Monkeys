@@ -27,7 +27,7 @@ final class GameWindow: NSWindow, NSWindowDelegate {
             defer: false
         )
         
-        self.title = "🐒 Monkeys — Salva le Banane! 🍌"
+        self.title = L.shared.s("game_bananas")
         self.titlebarAppearsTransparent = true
         self.isMovableByWindowBackground = true
 

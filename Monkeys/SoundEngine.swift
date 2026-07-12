@@ -49,8 +49,31 @@ final class SoundEngine: @unchecked Sendable {
     // MARK: - Adjustable state
 
     private var profile: SoundProfile
+    /// Parameters actually used for synthesis. Mirrors `profile.parameters`
+    /// for built-ins, or a user preset when `isCustomVoice` is true.
+    private var activeParams: SoundParameters
+    private var isCustomVoice: Bool = false
     private var volume: Float
     private var isEnabled: Bool
+
+    /// Game Mode: gameplay keys (WASD, space, shift, digits) get a small
+    /// boost, everything else is attenuated. Pure gain shaping — no extra
+    /// latency and no key interception.
+    private var gameModeEnabled: Bool = false
+    private static let gameBoostKeys: Set<Int64> = [
+        13, 0, 1, 2,                                  // W A S D
+        49, 56, 60,                                   // Space, Shifts
+        18, 19, 20, 21, 23, 22, 26, 28, 25, 29,       // digit row
+    ]
+
+    // MARK: - Buffer cache
+    //
+    // Synthesizing on every keypress costs ~0.5 ms per event on the tap
+    // thread. Instead we render 3 slightly detuned variants per key once,
+    // then pick one at random per press: natural variation, near-zero
+    // steady-state latency. Caches reset when the voice changes.
+    private var clickVariantCache: [Int64: [AVAudioPCMBuffer]] = [:]
+    private var releaseBufferCache: [Int64: AVAudioPCMBuffer] = [:]
 
     // MARK: - Thread safety
 
@@ -63,6 +86,7 @@ final class SoundEngine: @unchecked Sendable {
         self.mixer       = AVAudioMixerNode()
         self.synthesizer = SoundSynthesizer()
         self.profile     = .blue
+        self.activeParams = SoundProfile.blue.parameters
         self.volume      = 1.0
         self.isEnabled   = true
         self.playerNodes = []
@@ -123,8 +147,6 @@ final class SoundEngine: @unchecked Sendable {
 
         let variation = Float(keyCode % 50) / 50.0
         let isRepeatKey = (keyCode == 51 || keyCode == 117 || keyCode == 36 || keyCode == 76 || keyCode == 49)
-        // Large keys: spacebar(49), return(36), numpad enter(76), left shift(56), right shift(60), tab(48), backspace(51), delete(117)
-        let isLargeKey = [49, 36, 76, 56, 60, 48, 51, 117].contains(Int(keyCode))
 
         // Velocity-sensitive volume
         let now = Date()
@@ -145,13 +167,9 @@ final class SoundEngine: @unchecked Sendable {
                 if consecutiveDeletesCount >= 3 {
                     consecutiveDeletesCount = 0
                     // Play the normal click down
-                    if let clickBuffer = synthesizer.generateClickDown(
-                        profile: profile,
-                        pitchVariation: variation,
-                        isLargeKey: isLargeKey
-                    ) {
+                    if let clickBuffer = cachedClick(for: keyCode, variation: variation) {
                         let player = nextPlayer()
-                        player.volume = velocityMultiplier
+                        player.volume = velocityMultiplier * Float.random(in: 0.95...1.05) * gameGain(for: keyCode)
                         player.pan = Self.pan(for: keyCode)
                         player.scheduleBuffer(clickBuffer, at: nil, options: [], completionHandler: nil)
                         player.play()
@@ -169,13 +187,10 @@ final class SoundEngine: @unchecked Sendable {
         consecutiveDeletesCount = 0
 
         // --- Click-down ---
-        if let clickBuffer = synthesizer.generateClickDown(
-            profile: profile,
-            pitchVariation: variation,
-            isLargeKey: isLargeKey
-        ) {
+        if let clickBuffer = cachedClick(for: keyCode, variation: variation) {
             let clickPlayer = nextPlayer()
-            clickPlayer.volume = velocityMultiplier
+            // ±5% gain jitter so identical keypresses never sound machine-perfect
+            clickPlayer.volume = velocityMultiplier * Float.random(in: 0.95...1.05) * gameGain(for: keyCode)
             clickPlayer.pan = Self.pan(for: keyCode)
             clickPlayer.scheduleBuffer(clickBuffer, at: nil, options: [], completionHandler: nil)
             clickPlayer.play()
@@ -197,17 +212,61 @@ final class SoundEngine: @unchecked Sendable {
 
         // --- Release click ---
         let variation = Float(keyCode % 50) / 50.0
-        let isLargeKey = [49, 36, 76, 56, 60, 48, 51, 117].contains(Int(keyCode))
-        if let releaseBuffer = synthesizer.generateRelease(
-            profile: profile,
-            pitchVariation: variation,
-            isLargeKey: isLargeKey
-        ) {
+        if let releaseBuffer = cachedRelease(for: keyCode, variation: variation) {
             let releasePlayer = nextPlayer()
+            releasePlayer.volume = Float.random(in: 0.95...1.05)
             releasePlayer.pan = Self.pan(for: keyCode)
             releasePlayer.scheduleBuffer(releaseBuffer, at: nil, options: [], completionHandler: nil)
             releasePlayer.play()
         }
+    }
+
+    // MARK: - Voice buffer cache
+
+    /// Returns a randomly-picked cached click variant for `keyCode`,
+    /// rendering the 3 variants on first use.
+    /// - Precondition: `lock` must be held by the caller.
+    private func cachedClick(for keyCode: Int64, variation: Float) -> AVAudioPCMBuffer? {
+        // The sample-based profile bypasses the parameter cache entirely.
+        if !isCustomVoice && profile == .waxSlime {
+            return synthesizer.generateClickDown(profile: .waxSlime, pitchVariation: variation, isLargeKey: false)
+        }
+        if let variants = clickVariantCache[keyCode], !variants.isEmpty {
+            return variants.randomElement()
+        }
+        let category = KeyCategory.of(keyCode)
+        var variants: [AVAudioPCMBuffer] = []
+        // ±0.06 in variation space ≈ ±2 % pitch at the default spread
+        for offset in [-0.06, 0.0, 0.06] as [Float] {
+            let v = min(max(variation + offset, 0.0), 1.0)
+            if let buffer = synthesizer.generateClickDown(params: activeParams, pitchVariation: v, category: category) {
+                variants.append(buffer)
+            }
+        }
+        clickVariantCache[keyCode] = variants
+        return variants.randomElement()
+    }
+
+    /// - Precondition: `lock` must be held by the caller.
+    private func cachedRelease(for keyCode: Int64, variation: Float) -> AVAudioPCMBuffer? {
+        if !isCustomVoice && profile == .waxSlime {
+            return nil // wax slime has no synthetic upstroke
+        }
+        if let cached = releaseBufferCache[keyCode] {
+            return cached
+        }
+        let category = KeyCategory.of(keyCode)
+        guard let buffer = synthesizer.generateRelease(params: activeParams, pitchVariation: variation, category: category) else {
+            return nil
+        }
+        releaseBufferCache[keyCode] = buffer
+        return buffer
+    }
+
+    /// - Precondition: `lock` must be held by the caller.
+    private func clearVoiceCaches() {
+        clickVariantCache.removeAll(keepingCapacity: true)
+        releaseBufferCache.removeAll(keepingCapacity: true)
     }
 
     // MARK: - Settings
@@ -228,6 +287,48 @@ final class SoundEngine: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         profile = newProfile
+        activeParams = newProfile.parameters
+        isCustomVoice = false
+        clearVoiceCaches()
+    }
+
+    /// Activates a user preset (custom parameter set) as the typing voice.
+    func setCustomVoice(_ params: SoundParameters) {
+        lock.lock()
+        defer { lock.unlock() }
+        var safe = params
+        safe.clampToSafeRanges()
+        activeParams = safe
+        isCustomVoice = true
+        clearVoiceCaches()
+    }
+
+    /// Plays a one-shot preview of an arbitrary parameter set (settings editor).
+    func playPreviewParams(_ params: SoundParameters) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard engine.isRunning else { return }
+        var safe = params
+        safe.clampToSafeRanges()
+        if let buffer = synthesizer.generateClickDown(params: safe, pitchVariation: 0.5, category: .normal) {
+            let player = nextPlayer()
+            player.volume = 1.0
+            player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+            player.play()
+        }
+    }
+
+    /// Enables or disables Game Mode gain shaping.
+    func setGameMode(_ enabled: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        gameModeEnabled = enabled
+    }
+
+    /// - Precondition: `lock` must be held by the caller.
+    private func gameGain(for keyCode: Int64) -> Float {
+        guard gameModeEnabled else { return 1.0 }
+        return Self.gameBoostKeys.contains(keyCode) ? 1.15 : 0.8
     }
 
     /// Enables or disables all sound output.
@@ -420,6 +521,9 @@ final class SoundEngine: @unchecked Sendable {
     private var isMusicEnabled: Bool = true
     private var musicTrackIndex: Int = 0
     private var currentTrackURL: URL?
+    /// Incremented on every startMusic; delayed stop closures compare it so a
+    /// fade-out scheduled before a restart can never stop the new playback.
+    private var musicGeneration: Int = 0
     private static let musicVolume: Float = 0.15
 
     /// Lazily renders the synthesized groove track to Caches so it can be
@@ -459,11 +563,26 @@ final class SoundEngine: @unchecked Sendable {
         isMusicEnabled = enabled
         if !enabled {
             backgroundMusicPlayer?.setVolume(0.0, fadeDuration: 0.5)
-            let player = backgroundMusicPlayer
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                player?.stop()
+            let generation = musicGeneration
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                self?.stopMusicIfStale(generation: generation)
             }
         }
+    }
+
+    /// Stops the music only if no startMusic happened after the fade began.
+    private func stopMusicIfStale(generation: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard generation == musicGeneration else { return }
+        backgroundMusicPlayer?.stop()
+    }
+
+    private func pauseMusicIfStale(generation: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard generation == musicGeneration else { return }
+        backgroundMusicPlayer?.pause()
     }
 
     /// Starts looping background music with a gentle fade-in.
@@ -493,6 +612,7 @@ final class SoundEngine: @unchecked Sendable {
             }
         }
 
+        musicGeneration += 1
         backgroundMusicPlayer?.volume = 0.0
         backgroundMusicPlayer?.play()
         backgroundMusicPlayer?.setVolume(Self.musicVolume, fadeDuration: 1.2)
@@ -505,8 +625,9 @@ final class SoundEngine: @unchecked Sendable {
 
         guard let player = backgroundMusicPlayer, player.isPlaying else { return }
         player.setVolume(0.0, fadeDuration: 0.6)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak player] in
-            player?.stop()
+        let generation = musicGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+            self?.stopMusicIfStale(generation: generation)
         }
     }
 
@@ -517,8 +638,9 @@ final class SoundEngine: @unchecked Sendable {
 
         guard let player = backgroundMusicPlayer, player.isPlaying else { return }
         player.setVolume(0.0, fadeDuration: 0.3)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak player] in
-            player?.pause()
+        let generation = musicGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.pauseMusicIfStale(generation: generation)
         }
     }
 
@@ -528,7 +650,36 @@ final class SoundEngine: @unchecked Sendable {
         defer { lock.unlock() }
 
         guard isEnabled, isMusicEnabled, let player = backgroundMusicPlayer, !player.isPlaying else { return }
+        musicGeneration += 1
         player.play()
         player.setVolume(Self.musicVolume, fadeDuration: 0.8)
+    }
+
+    // MARK: - Test Sound
+
+    /// Plays a full click → release sequence of the active voice without any
+    /// real key input, so users can audition settings from the menu.
+    func playTestSound() {
+        playPreviewClick(currentProfile())
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
+            self?.playTestRelease()
+        }
+    }
+
+    private func currentProfile() -> SoundProfile {
+        lock.lock()
+        defer { lock.unlock() }
+        return profile
+    }
+
+    private func playTestRelease() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard engine.isRunning else { return }
+        if let buffer = synthesizer.generateRelease(profile: profile, pitchVariation: 0.5, isLargeKey: false) {
+            let player = nextPlayer()
+            player.scheduleBuffer(buffer, at: nil, options: [], completionHandler: nil)
+            player.play()
+        }
     }
 }

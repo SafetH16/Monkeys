@@ -20,7 +20,7 @@ final class SpeedTypeWindow: NSWindow, NSWindowDelegate {
             defer: false
         )
 
-        self.title = "🐵 Sfida di Velocità — Monkeys ⌨️"
+        self.title = L.shared.s("game_speed")
         self.titlebarAppearsTransparent = true
         self.isMovableByWindowBackground = true
         self.backgroundColor = NSColor(red: 0.02, green: 0.08, blue: 0.03, alpha: 1.0)

@@ -22,7 +22,7 @@ final class StatsWindow: NSWindow {
             defer: false
         )
 
-        self.title = "📊 MonKeys"
+        self.title = L.shared.s("statistics")
         self.titlebarAppearsTransparent = true
         self.isMovableByWindowBackground = true
         self.backgroundColor = NSColor(red: 0.07, green: 0.07, blue: 0.09, alpha: 1.0)

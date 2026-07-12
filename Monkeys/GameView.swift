@@ -459,6 +459,8 @@ final class GameView: NSView {
 
     func handleKeyTyped(_ char: Character) {
         if isWaitingToStart {
+            // ESC on the start screen should not launch a game
+            if char == "\u{1B}" { return }
             // Z toggles Zen mode on the start screen; any other key starts
             if char == "z" || char == "Z" {
                 isZenMode.toggle()
@@ -1261,7 +1263,7 @@ final class GameView: NSView {
 
         // Freeze countdown (left, under the panel)
         if freezeFrames > 0 {
-            let secs = freezeFrames / 60 + 1
+            let secs = (freezeFrames + 59) / 60
             let frzStr = "❄️ \(secs)s" as NSString
             frzStr.draw(at: NSPoint(x: 14, y: h - 70), withAttributes: [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold),

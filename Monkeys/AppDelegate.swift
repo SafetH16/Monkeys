@@ -18,6 +18,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var speedTypeWindow: SpeedTypeWindow?
     private var statsWindow: StatsWindow?
     private var onboardingWindow: OnboardingWindow?
+    private var settingsWindow: SettingsWindow?
+    private var visualizerPanel: VisualizerPanel?
+    private let presetStore = SoundProfileStore()
+
+    /// True while sounds are muted by a meeting/app rule (not by the user).
+    private var isAutoMuted = false
+    private var isFocusMode = false
+    private var isGameMode = false
 
     // Menu item references for state updates
     private var toggleMenuItem: NSMenuItem!
@@ -30,16 +38,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var peakWpmMenuItem: NSMenuItem!
     private var musicMenuItem: NSMenuItem!
     private var loginMenuItem: NSMenuItem!
+    private var focusMenuItem: NSMenuItem!
+    private var gameModeMenuItem: NSMenuItem!
+    private var visualizerMenuItem: NSMenuItem!
 
     private let allProfiles: [SoundProfile] = [
         .blue, .brown, .red, .black, .silentRed, .speedSilver,
         .gateronRed, .gateronYellow, .silentBlack,
+        .deepThock, .silentOffice, .terminal, .softMac,
         .typewriter, .bubbles, .retro8bit, .monkey, .waxSlime,
     ]
 
     private let profileLocKeys: [String] = [
         "p_tactile_click", "p_soft_tactile", "p_light_linear", "p_heavy_linear",
         "p_quiet_light", "p_speed", "p_smooth", "p_medium", "p_quiet_heavy",
+        "p_deep_thock", "p_silent_office", "p_terminal", "p_soft_mac",
         "p_typewriter", "p_bubbles", "p_retro", "p_monkey", "p_wax_slime",
     ]
 
@@ -65,7 +78,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.soundEngine.playKeyDown(keyCode: keyCode, isRepeat: isRepeat)
             if !isRepeat {
                 _ = self.wpmTracker.recordKeyPress()
-                self.typingStats.recordKeystroke(keyCode: keyCode)
+                if AppSettings.statsEnabled {
+                    self.typingStats.recordKeystroke(keyCode: keyCode)
+                }
+                Task { @MainActor [weak self] in
+                    guard let self, let panel = self.visualizerPanel, panel.isVisible else { return }
+                    panel.visualizerView.highlight(keyCode: keyCode)
+                }
             }
         }
         keyboardMonitor.onKeyUp = { [weak self] keyCode in
@@ -87,23 +106,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 4. Set up menu bar
         setupStatusItem()
 
-        // 5. Start app profile manager (auto-mute in video calls)
-        appProfileManager.onShouldMute = { [weak self] in
+        // 5. Start app profile manager (per-app rules + meeting mode)
+        appProfileManager.onApplyState = { [weak self] state in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.soundEngine.setEnabled(false)
-                self.isEnabled = false
-                self.toggleMenuItem.title = "🔇 Auto-Muto (videocall)"
-                self.updateStatusItem()
-            }
-        }
-        appProfileManager.onShouldUnmute = { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.soundEngine.setEnabled(true)
-                self.isEnabled = true
-                self.toggleMenuItem.title = L.shared.s("enabled")
-                self.updateStatusItem()
+                self?.applyAppSoundState(state)
             }
         }
         appProfileManager.start()
@@ -129,10 +135,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 else { tEmoji = "🐵" }
                 self.statsMenuItem.title = "\(tEmoji) \(L.shared.sf("today_keys", self.typingStats.formatNumber(tc)))"
                 self.peakWpmMenuItem.title = L.shared.sf("record_wpm", self.typingStats.getPeakWPM())
+                // Persist batched keystroke counters away from the tap thread
+                self.typingStats.flushIfDirty()
             }
         }
         
-        // 7. Silent update check at startup
+        // 7. Restore the keyboard visualizer if it was visible last session
+        if UserDefaults.standard.bool(forKey: SettingsKey.visualizerVisible) {
+            showVisualizer()
+        }
+
+        // 8. Silent update check at startup
         Updater.shared.checkForUpdates(silent: true)
     }
 
@@ -154,10 +167,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 image.isTemplate = true
                 button.image = image
                 button.title = ""
-                button.contentTintColor = isEnabled ? nil : NSColor.labelColor.withAlphaComponent(0.3)
+                let active = isEnabled && !isAutoMuted
+                button.contentTintColor = active ? nil : NSColor.labelColor.withAlphaComponent(0.3)
             } else {
                 button.image = nil
-                button.title = isEnabled ? "🐵" : "🤫"
+                button.title = (isEnabled && !isAutoMuted) ? "🐵" : "🤫"
             }
         }
     }
@@ -223,6 +237,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(loginMenuItem)
         }
 
+        // Quick modes + per-app quick actions
+        focusMenuItem = NSMenuItem(
+            title: isFocusMode ? L.shared.s("menu_focus_on") : L.shared.s("menu_focus_off"),
+            action: #selector(toggleFocusMode), keyEquivalent: ""
+        )
+        focusMenuItem.target = self
+        menu.addItem(focusMenuItem)
+
+        gameModeMenuItem = NSMenuItem(
+            title: isGameMode ? L.shared.s("menu_game_on") : L.shared.s("menu_game_off"),
+            action: #selector(toggleGameMode), keyEquivalent: ""
+        )
+        gameModeMenuItem.target = self
+        menu.addItem(gameModeMenuItem)
+
+        let visualizerVisible = visualizerPanel?.isVisible ?? false
+        visualizerMenuItem = NSMenuItem(
+            title: visualizerVisible ? L.shared.s("menu_visualizer_on") : L.shared.s("menu_visualizer_off"),
+            action: #selector(toggleVisualizer), keyEquivalent: ""
+        )
+        visualizerMenuItem.target = self
+        menu.addItem(visualizerMenuItem)
+
+        let muteAppItem = NSMenuItem(title: L.shared.s("menu_mute_app"), action: #selector(muteForCurrentApp), keyEquivalent: "")
+        muteAppItem.target = self
+        menu.addItem(muteAppItem)
+
+        let ruleAppItem = NSMenuItem(title: L.shared.s("menu_rule_app"), action: #selector(createProfileForCurrentApp), keyEquivalent: "")
+        ruleAppItem.target = self
+        menu.addItem(ruleAppItem)
+
+        let settingsItem = NSMenuItem(title: L.shared.s("menu_settings"), action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
         menu.addItem(.separator())
 
         // 4. Volume (compact, no label) — restored from last session
@@ -242,7 +291,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sliderMenuItem = NSMenuItem()
         sliderMenuItem.view = sliderView
         menu.addItem(sliderMenuItem)
-        soundEngine.setVolume(Float(savedVolume) / 100.0)
+        soundEngine.setVolume(Float(savedVolume) / 100.0 * (isFocusMode ? 0.3 : 1.0))
+
+        let testItem = NSMenuItem(title: L.shared.s("menu_test_sound"), action: #selector(playTestSound), keyEquivalent: "")
+        testItem.target = self
+        menu.addItem(testItem)
 
         // 4b. Game music toggle
         let musicEnabled = UserDefaults.standard.object(forKey: "MonkeysMusicEnabled") as? Bool ?? true
@@ -271,8 +324,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         profileMenuItems[0].state = .on
         soundEngine.setProfile(.blue)
 
-        // Restore saved profile
-        if let savedRaw = UserDefaults.standard.string(forKey: "MonkeysSoundProfile"),
+        // Restore saved voice: custom preset wins over built-in profile
+        // (skipped while Focus Mode is forcing the silent voice)
+        if isFocusMode {
+            for item in profileMenuItems { item.state = .off }
+        } else if let customName = AppSettings.customPresetName,
+           let preset = presetStore.preset(named: customName) {
+            soundEngine.setCustomVoice(preset.params)
+            for item in profileMenuItems { item.state = .off }
+        } else if let savedRaw = UserDefaults.standard.string(forKey: SettingsKey.soundProfile),
            let savedProfile = SoundProfile(rawValue: savedRaw),
            let idx = allProfiles.firstIndex(of: savedProfile) {
             soundEngine.setProfile(savedProfile)
@@ -355,10 +415,157 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Actions
 
     @objc private func toggleEnabled() {
-        isEnabled.toggle()
+        if isAutoMuted {
+            // Manual unmute during an auto-mute: override for the current app.
+            isAutoMuted = false
+            isEnabled = true
+            appProfileManager.setManualOverrideForCurrentApp()
+        } else {
+            isEnabled.toggle()
+        }
         toggleMenuItem.title = isEnabled ? L.shared.s("enabled") : L.shared.s("disabled")
         soundEngine.setEnabled(isEnabled)
         updateStatusItem()
+    }
+
+    /// Applies the state requested by AppProfileManager for the frontmost app.
+    /// Global manual mute always wins; auto-mute never flips `isEnabled`.
+    private func applyAppSoundState(_ state: AppSoundState) {
+        isAutoMuted = state.autoMuted
+
+        // Volume: per-app override or the user's global setting (focus scales it).
+        let baseVolume = state.volume ?? AppSettings.volume
+        let scale: Float = isFocusMode ? 0.3 : 1.0
+        soundEngine.setVolume(Float(baseVolume) / 100.0 * scale)
+
+        // Voice: per-app override or the user's chosen voice.
+        if let raw = state.profileRaw, let ruleProfile = SoundProfile(rawValue: raw) {
+            soundEngine.setProfile(ruleProfile)
+        } else if !isFocusMode {
+            restoreUserVoice()
+        }
+
+        soundEngine.setEnabled(isEnabled && !state.autoMuted)
+
+        if state.autoMuted {
+            toggleMenuItem.title = state.reason == .meeting
+                ? L.shared.s("auto_muted_meeting")
+                : L.shared.s("auto_muted_rule")
+        } else {
+            toggleMenuItem.title = isEnabled ? L.shared.s("enabled") : L.shared.s("disabled")
+        }
+        updateStatusItem()
+    }
+
+    /// Restores the user's chosen voice: custom preset if one is active,
+    /// otherwise the saved built-in profile.
+    private func restoreUserVoice() {
+        if let customName = AppSettings.customPresetName,
+           let preset = presetStore.preset(named: customName) {
+            soundEngine.setCustomVoice(preset.params)
+        } else if let raw = AppSettings.savedProfileRaw,
+                  let saved = SoundProfile(rawValue: raw) {
+            soundEngine.setProfile(saved)
+        } else {
+            soundEngine.setProfile(.blue)
+        }
+    }
+
+    @objc private func toggleFocusMode() {
+        isFocusMode.toggle()
+        if isFocusMode {
+            soundEngine.setProfile(.silentOffice)
+            soundEngine.setVolume(Float(AppSettings.volume) / 100.0 * 0.3)
+        } else {
+            restoreUserVoice()
+            soundEngine.setVolume(Float(AppSettings.volume) / 100.0)
+        }
+        focusMenuItem.title = isFocusMode ? L.shared.s("menu_focus_on") : L.shared.s("menu_focus_off")
+    }
+
+    @objc private func toggleGameMode() {
+        isGameMode.toggle()
+        soundEngine.setGameMode(isGameMode)
+        gameModeMenuItem.title = isGameMode ? L.shared.s("menu_game_on") : L.shared.s("menu_game_off")
+    }
+
+    @objc private func muteForCurrentApp() {
+        guard let front = appProfileManager.frontmostApp else { return }
+        var rule = appProfileManager.rules.first { $0.bundleID == front.bundleID }
+            ?? PerAppRule(bundleID: front.bundleID, appName: front.name)
+        rule.muted = true
+        rule.enabled = true
+        appProfileManager.upsertRule(rule)
+    }
+
+    @objc private func createProfileForCurrentApp() {
+        guard let front = appProfileManager.frontmostApp else { return }
+        var rule = appProfileManager.rules.first { $0.bundleID == front.bundleID }
+            ?? PerAppRule(bundleID: front.bundleID, appName: front.name)
+        rule.profileRaw = AppSettings.savedProfileRaw
+        rule.volume = AppSettings.volume
+        rule.enabled = true
+        appProfileManager.upsertRule(rule)
+        openSettings()
+    }
+
+    @objc private func toggleVisualizer() {
+        if let panel = visualizerPanel, panel.isVisible {
+            panel.visualizerView.stopTimer()
+            panel.orderOut(nil)
+            UserDefaults.standard.set(false, forKey: SettingsKey.visualizerVisible)
+            visualizerMenuItem.title = L.shared.s("menu_visualizer_off")
+        } else {
+            showVisualizer()
+            visualizerMenuItem.title = L.shared.s("menu_visualizer_on")
+        }
+    }
+
+    private func showVisualizer() {
+        if visualizerPanel == nil {
+            visualizerPanel = VisualizerPanel()
+            // Default position: bottom center of the main screen
+            if let screen = NSScreen.main, visualizerPanel?.frameAutosaveName.isEmpty == false {
+                let frame = visualizerPanel?.frame ?? .zero
+                if frame.origin == .zero {
+                    let x = screen.visibleFrame.midX - 170
+                    let y = screen.visibleFrame.minY + 60
+                    visualizerPanel?.setFrameOrigin(NSPoint(x: x, y: y))
+                }
+            }
+        }
+        visualizerPanel?.orderFront(nil)
+        UserDefaults.standard.set(true, forKey: SettingsKey.visualizerVisible)
+    }
+
+    @objc private func openSettings() {
+        if settingsWindow == nil {
+            let window = SettingsWindow(
+                engine: soundEngine,
+                presetStore: presetStore,
+                profileManager: appProfileManager,
+                typingStats: typingStats,
+                keyboardMonitor: keyboardMonitor
+            )
+            window.isSoundsEnabled = { [weak self] in self?.isEnabled ?? true }
+            window.onSetSoundsEnabled = { [weak self] enabled in
+                guard let self else { return }
+                self.isEnabled = enabled
+                self.soundEngine.setEnabled(enabled && !self.isAutoMuted)
+                self.toggleMenuItem.title = enabled ? L.shared.s("enabled") : L.shared.s("disabled")
+                self.updateStatusItem()
+            }
+            window.onGlobalChange = { [weak self] in
+                guard let self else { return }
+                self.statusItem.menu = self.buildMenu()
+                self.updateStatusItem()
+            }
+            settingsWindow = window
+        }
+        settingsWindow?.refreshGeneralTab()
+        settingsWindow?.center()
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func toggleAutoMute() {
@@ -370,6 +577,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let volume = Float(sender.integerValue) / 100.0
         soundEngine.setVolume(volume)
         UserDefaults.standard.set(sender.integerValue, forKey: "MonkeysVolume")
+    }
+
+    @objc private func playTestSound() {
+        soundEngine.playTestSound()
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -411,7 +622,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard idx >= 0 && idx < allProfiles.count else { return }
         let profile = allProfiles[idx]
         soundEngine.setProfile(profile)
-        UserDefaults.standard.set(profile.rawValue, forKey: "MonkeysSoundProfile")
+        UserDefaults.standard.set(profile.rawValue, forKey: SettingsKey.soundProfile)
+        AppSettings.customPresetName = nil
         // Audition the new profile right away
         soundEngine.playPreviewClick(profile)
     }
@@ -457,6 +669,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         print("KeyboardMonitor: Started successfully after accessibility permission was granted.")
                         self.permissionTimer?.invalidate()
                         self.permissionTimer = nil
+                        self.onboardingWindow?.close()
+                        self.onboardingWindow = nil
                     }
                 }
             }

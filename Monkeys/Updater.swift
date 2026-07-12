@@ -121,26 +121,29 @@ final class Updater: @unchecked Sendable {
     
     private func applyUpdate(zipURL: URL) {
         let appPath = Bundle.main.bundlePath
-        let tempDir = NSTemporaryDirectory()
-        let unzipDir = URL(fileURLWithPath: tempDir).appendingPathComponent("MonKeysExtract")
-        let scriptPath = URL(fileURLWithPath: tempDir).appendingPathComponent("apply_update.sh").path
-        
+        let scriptPath = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("monkeys_apply_update.sh").path
+
+        // Never delete the running app before the replacement is verified:
+        // extract to a private mktemp dir, check the bundle exists, move the
+        // old app aside as a backup, and restore it if the copy fails.
         let scriptContent = """
         #!/bin/bash
+        set -u
         sleep 1
-        rm -rf "\(unzipDir.path)"
-        mkdir -p "\(unzipDir.path)"
-        unzip -q "\(zipURL.path)" -d "\(unzipDir.path)"
-        
-        if [ -d "\(unzipDir.path)/MonKeys.app" ]; then
-            rm -rf "\(appPath)"
-            cp -R "\(unzipDir.path)/MonKeys.app" "\(appPath)"
-            open "\(appPath)"
+        WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/monkeys_update.XXXXXX")" || exit 1
+        cleanup() { rm -rf "$WORKDIR"; rm -f "\(zipURL.path)"; rm -f "$0"; }
+        if ! unzip -q "\(zipURL.path)" -d "$WORKDIR"; then cleanup; exit 1; fi
+        if [ ! -d "$WORKDIR/MonKeys.app" ]; then cleanup; exit 1; fi
+        BACKUP="$WORKDIR/MonKeys_previous.app"
+        if ! mv "\(appPath)" "$BACKUP"; then cleanup; exit 1; fi
+        if cp -R "$WORKDIR/MonKeys.app" "\(appPath)"; then
+            xattr -cr "\(appPath)" 2>/dev/null || true
+        else
+            mv "$BACKUP" "\(appPath)"
         fi
-        
-        rm -rf "\(unzipDir.path)"
-        rm -f "\(zipURL.path)"
-        rm -f "$0"
+        open "\(appPath)"
+        cleanup
         """
         
         do {

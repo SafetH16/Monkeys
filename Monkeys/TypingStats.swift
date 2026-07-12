@@ -51,16 +51,21 @@ final class TypingStats: @unchecked Sendable {
 
         if let keyCode {
             keyCounts["\(keyCode)", default: 0] += 1
-            unsavedKeyCounts += 1
-            // Persist the (potentially large) dictionary in batches
-            if unsavedKeyCounts >= 25 {
-                UserDefaults.standard.set(keyCounts, forKey: kKeyCounts)
-                unsavedKeyCounts = 0
-            }
         }
-
-        save()
+        unsavedKeyCounts += 1
+        // No UserDefaults write here: recordKeystroke runs on the event-tap
+        // thread. Persistence happens via flushIfDirty() on a main-thread
+        // timer and flush() at termination.
         return todayKeyCount
+    }
+
+    /// Persists pending counters if anything changed. Cheap no-op otherwise.
+    /// Call from a timer on the main thread, never from the tap callback.
+    func flushIfDirty() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard unsavedKeyCounts > 0 else { return }
+        persistLocked()
     }
 
     /// Returns a snapshot of the all-time per-key press counts.
@@ -74,14 +79,33 @@ final class TypingStats: @unchecked Sendable {
         return result
     }
 
-    /// Flushes any batched per-key counts to disk (call on app termination).
+    /// Flushes all batched counters to disk (call on app termination).
     func flush() {
         lock.lock()
         defer { lock.unlock() }
-        if unsavedKeyCounts > 0 {
-            UserDefaults.standard.set(keyCounts, forKey: kKeyCounts)
-            unsavedKeyCounts = 0
-        }
+        persistLocked()
+    }
+
+    /// Erases every stored statistic (today, all-time, peak WPM, per-key).
+    func clearAll() {
+        lock.lock()
+        defer { lock.unlock() }
+        todayKeyCount = 0
+        allTimeKeyCount = 0
+        peakWPM = 0
+        keyCounts.removeAll()
+        unsavedKeyCounts = 0
+        UserDefaults.standard.removeObject(forKey: kPeakWPM)
+        persistLocked()
+    }
+
+    /// - Precondition: `lock` must be held by the caller.
+    private func persistLocked() {
+        UserDefaults.standard.set(keyCounts, forKey: kKeyCounts)
+        UserDefaults.standard.set(todayKeyCount, forKey: kTodayKeyCount)
+        UserDefaults.standard.set(todayDate, forKey: kTodayDate)
+        UserDefaults.standard.set(allTimeKeyCount, forKey: kAllTimeKeyCount)
+        unsavedKeyCounts = 0
     }
 
     /// Updates the peak WPM if the new value is higher.

@@ -27,7 +27,8 @@ private func eventTapCallback(
 
     let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
     let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-    print("KeyboardMonitor Callback: received type=\(type.rawValue), keyCode=\(keyCode), isRepeat=\(isRepeat)")
+    // No logging here: this callback runs for every key event system-wide,
+    // and key codes must never reach the console (privacy + latency).
 
     if type == .keyDown {
         let flags = event.flags

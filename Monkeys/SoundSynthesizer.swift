@@ -27,13 +27,17 @@ final class SoundSynthesizer: @unchecked Sendable {
     // MARK: - Initialisation
 
     init() {
-        guard let fmt = AVAudioFormat(
-            standardFormatWithSampleRate: Self.sampleRate,
-            channels: 1
-        ) else {
-            fatalError("SoundSynthesizer: unable to create mono Float32 format at \(Self.sampleRate) Hz")
+        // Fail soft, never crash: 44.1kHz mono Float32 cannot realistically
+        // fail, but if it ever does we fall back to 48kHz, then to a bare
+        // format object (the app keeps running, just without synthesis).
+        if let fmt = AVAudioFormat(standardFormatWithSampleRate: Self.sampleRate, channels: 1) {
+            self.format = fmt
+        } else if let fallback = AVAudioFormat(standardFormatWithSampleRate: 48000.0, channels: 1) {
+            self.format = fallback
+        } else {
+            self.format = AVAudioFormat()
         }
-        self.format = fmt
+        let fmt = self.format
 
         // Preload wax_slime.wav
         if let url = Bundle.main.url(forResource: "wax_slime", withExtension: "wav") {
@@ -46,11 +50,14 @@ final class SoundSynthesizer: @unchecked Sendable {
                     } else if let converter = AVAudioConverter(from: buffer.format, to: fmt),
                               let newBuffer = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(Double(buffer.frameLength) * (fmt.sampleRate / buffer.format.sampleRate))) {
                         var error: NSError?
-                        var hasData = true
-                        converter.convert(to: newBuffer, error: &error, withInputFrom: { inNumPackets, outStatus in
-                            if hasData {
+                        // Box the one-shot flag so the @Sendable input block can
+                        // mutate it without a captured-var concurrency warning.
+                        final class OneShotFlag: @unchecked Sendable { var hasData = true }
+                        let flag = OneShotFlag()
+                        converter.convert(to: newBuffer, error: &error, withInputFrom: { _, outStatus in
+                            if flag.hasData {
                                 outStatus.pointee = .haveData
-                                hasData = false
+                                flag.hasData = false
                                 return buffer
                             } else {
                                 outStatus.pointee = .endOfStream
@@ -82,13 +89,20 @@ final class SoundSynthesizer: @unchecked Sendable {
     /// - Returns: A filled `AVAudioPCMBuffer`, or `nil` if allocation fails.
     func generateClickDown(profile: SoundProfile, pitchVariation: Float, isLargeKey: Bool = false) -> AVAudioPCMBuffer? {
         if profile == .waxSlime, let buffer = waxSlimeBuffer {
-            // Apply slight pitch variation even for samples to make repeated keys sound natural
             return buffer
         }
+        return generateClickDown(params: profile.parameters,
+                                 pitchVariation: pitchVariation,
+                                 category: isLargeKey ? .space : .normal)
+    }
 
+    /// Parameter-driven click synthesis: three layers (noise attack, click
+    /// sine, low thud), with per-category pitch/gain/duration/resonance.
+    func generateClickDown(params: SoundParameters, pitchVariation: Float, category: KeyCategory) -> AVAudioPCMBuffer? {
         let sampleRate = Float(Self.sampleRate)
-        // Use the longer of click / thud durations, plus a small tail.
-        let totalDuration = max(profile.clickDuration, profile.thudDuration) + 0.010
+        let clickDuration = params.clickDuration * category.durationFactor
+        let thudDuration = params.thudDuration * category.durationFactor
+        let totalDuration = max(clickDuration, thudDuration) + 0.010
         let frameCount = AVAudioFrameCount(totalDuration * sampleRate)
 
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
@@ -98,14 +112,13 @@ final class SoundSynthesizer: @unchecked Sendable {
 
         guard let samples = buffer.floatChannelData?[0] else { return nil }
 
-        let pitchShift = 1.0 + (pitchVariation - 0.5) * 0.30 // ±15 %
-        let largeKeyFactor: Float = isLargeKey ? 0.6 : 1.0  // Lower pitch for large keys
-        let largeKeyResonance: Float = isLargeKey ? 1.4 : 1.0  // More resonance
-        let clickFreq  = profile.clickFrequency * pitchShift * largeKeyFactor
-        let thudFreq   = profile.thudFrequency * pitchShift * 0.5 * largeKeyFactor
+        let pitchShift = 1.0 + (pitchVariation - 0.5) * params.variation
+        let clickFreq  = params.clickFrequency * pitchShift * category.pitchFactor
+        let thudFreq   = params.thudFrequency * pitchShift * 0.5 * category.pitchFactor
+        let amplitude  = params.clickAmplitude * category.gainFactor
 
-        let clickDecay: Float = profile.clickDuration * 0.33
-        let thudDecay:  Float = profile.thudDuration  * 0.50
+        let clickDecay: Float = clickDuration * 0.33
+        let thudDecay:  Float = thudDuration  * 0.50
         let attackEnd:  Float = 0.002 // 2 ms noise burst
 
         for i in 0 ..< Int(frameCount) {
@@ -116,17 +129,17 @@ final class SoundSynthesizer: @unchecked Sendable {
             if t < attackEnd {
                 let attackEnv = (1.0 - t / attackEnd) // linear fade
                 let noise = Float.random(in: -1.0 ... 1.0)
-                sample += noise * attackEnv * profile.clickAmplitude * profile.clickNoiseAmount
+                sample += noise * attackEnv * amplitude * params.clickNoiseAmount
             }
 
             // --- Layer 2: Click sine with exponential decay ---
-            let clickEnv = profile.clickAmplitude * expf(-t / clickDecay)
+            let clickEnv = amplitude * expf(-t / clickDecay)
             let clickSine = sinf(Self.twoPi * clickFreq * t)
-            let clickNoise = Float.random(in: -1.0 ... 1.0) * profile.clickNoiseAmount
-            sample += clickEnv * (clickSine * (1.0 - profile.clickNoiseAmount) + clickNoise)
+            let clickNoise = Float.random(in: -1.0 ... 1.0) * params.clickNoiseAmount
+            sample += clickEnv * (clickSine * (1.0 - params.clickNoiseAmount) + clickNoise)
 
             // --- Layer 3: Low-frequency thud ---
-            let thudEnv = profile.clickAmplitude * 0.6 * largeKeyResonance * expf(-t / thudDecay)
+            let thudEnv = amplitude * 0.6 * category.resonanceFactor * expf(-t / thudDecay)
             let thudSine = sinf(Self.twoPi * thudFreq * t)
             sample += thudEnv * thudSine
 
@@ -190,9 +203,16 @@ final class SoundSynthesizer: @unchecked Sendable {
         if profile == .waxSlime {
             return nil
         }
-        
+        return generateRelease(params: profile.parameters,
+                               pitchVariation: pitchVariation,
+                               category: isLargeKey ? .space : .normal)
+    }
+
+    /// Parameter-driven upstroke click.
+    func generateRelease(params: SoundParameters, pitchVariation: Float, category: KeyCategory) -> AVAudioPCMBuffer? {
         let sampleRate = Float(Self.sampleRate)
-        let totalDuration = profile.releaseDuration + 0.005
+        let releaseDuration = params.releaseDuration * category.durationFactor
+        let totalDuration = releaseDuration + 0.005
         let frameCount = AVAudioFrameCount(totalDuration * sampleRate)
 
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
@@ -202,10 +222,10 @@ final class SoundSynthesizer: @unchecked Sendable {
 
         guard let samples = buffer.floatChannelData?[0] else { return nil }
 
-        let pitchShift  = 1.0 + (pitchVariation - 0.5) * 0.30
-        let largeKeyFactor: Float = isLargeKey ? 0.65 : 1.0
-        let releaseFreq = profile.releaseFrequency * pitchShift * largeKeyFactor
-        let decayTime   = profile.releaseDuration * 0.33
+        let pitchShift  = 1.0 + (pitchVariation - 0.5) * params.variation
+        let releaseFreq = params.releaseFrequency * pitchShift * category.pitchFactor
+        let amplitude   = params.releaseAmplitude * category.gainFactor
+        let decayTime   = releaseDuration * 0.33
         let attackEnd: Float = 0.001 // 1 ms noise burst
 
         for i in 0 ..< Int(frameCount) {
@@ -216,11 +236,11 @@ final class SoundSynthesizer: @unchecked Sendable {
             // Brief noise burst
             if t < attackEnd {
                 let attackEnv = 1.0 - t / attackEnd
-                sample += Float.random(in: -1.0 ... 1.0) * attackEnv * profile.releaseAmplitude * 0.3
+                sample += Float.random(in: -1.0 ... 1.0) * attackEnv * amplitude * 0.3
             }
 
             // Sine with exponential decay
-            let env = profile.releaseAmplitude * expf(-t / decayTime)
+            let env = amplitude * expf(-t / decayTime)
             sample += env * sinf(Self.twoPi * releaseFreq * t)
 
             samples[i] = sample

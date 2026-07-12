@@ -403,6 +403,10 @@ final class SpeedTypeView: NSView {
     private var finishedAsRecord: Bool = false
     private var confetti: [Confetto] = []
 
+    // WPM captured at the exact moment the game ends: the live formula uses
+    // wall-clock elapsed time and would keep shrinking on the results screen.
+    private var finalWPM: Int = 0
+
     // Next phrase, shown dimmed under the input so there's no dead time
     private var upcomingText: String = ""
 
@@ -596,6 +600,7 @@ final class SpeedTypeView: NSView {
         phase = .finished
         onStopMusic?()
         let wpm = calculateWPM()
+        finalWPM = wpm
         wpmHistory.append(wpm)
 
         // Keep the last 5 runs for this difficulty
@@ -1241,9 +1246,9 @@ final class SpeedTypeView: NSView {
         ctx.setFillColor(NSColor(white: 0.0, alpha: 0.5).cgColor)
         ctx.fill(bounds)
 
-        let wpm = calculateWPM()
+        let wpm = finalWPM
         let accuracy = calculateAccuracy()
-        let isRecord = wpm >= highScoreWPM && wpm > 0
+        let isRecord = finishedAsRecord
 
         // Monkey reaction
         let bigMonkey: String
