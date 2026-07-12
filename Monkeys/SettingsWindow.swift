@@ -64,6 +64,10 @@ final class SettingsWindow: NSWindow {
 
     private var devicePopups: [NSPopUpButton] = []
     private var currentOutputLabel: NSTextField!
+    private var dailyGoalPopup: NSPopUpButton!
+
+    /// Daily-goal popup values (keystrokes); index 0 = off.
+    private static let goalSteps = [0, 2_000, 5_000, 10_000, 20_000]
 
     /// Called after a device rule changes so the app can recompose the state.
     var onDeviceRulesChanged: (() -> Void)?
@@ -142,7 +146,15 @@ final class SettingsWindow: NSWindow {
         let (code, flags) = keyboardMonitor.currentShortcut
         shortcutLabel.stringValue = stringForShortcut(keyCode: code, flags: flags)
         statsCheck.state = AppSettings.statsEnabled ? .on : .off
+        let goalIndex = Self.goalSteps.firstIndex(of: AppSettings.dailyGoal) ?? 0
+        dailyGoalPopup.selectItem(at: goalIndex)
         refreshDevicesTab()
+    }
+
+    @objc private func dailyGoalChanged() {
+        let idx = dailyGoalPopup.indexOfSelectedItem
+        guard idx >= 0 && idx < Self.goalSteps.count else { return }
+        AppSettings.dailyGoal = Self.goalSteps[idx]
     }
 
     // MARK: - General tab
@@ -202,6 +214,20 @@ final class SettingsWindow: NSWindow {
             languagePopup.selectItem(at: idx)
         }
         v.addSubview(languagePopup)
+
+        // Daily typing goal (a gentle chime celebrates reaching it)
+        let goalTitle = NSTextField(labelWithString: "Daily typing goal")
+        goalTitle.frame = NSRect(x: 30, y: 96, width: 130, height: 20)
+        v.addSubview(goalTitle)
+
+        dailyGoalPopup = NSPopUpButton(frame: NSRect(x: 165, y: 90, width: 150, height: 28))
+        dailyGoalPopup.addItem(withTitle: "Off")
+        for step in Self.goalSteps.dropFirst() {
+            dailyGoalPopup.addItem(withTitle: "\(step / 1000).000 keys")
+        }
+        dailyGoalPopup.target = self
+        dailyGoalPopup.action = #selector(dailyGoalChanged)
+        v.addSubview(dailyGoalPopup)
 
         let resetButton = NSButton(title: "Reset to Defaults", target: self, action: #selector(resetDefaultsClicked))
         resetButton.frame = NSRect(x: 30, y: 30, width: 160, height: 30)

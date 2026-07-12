@@ -3,6 +3,19 @@
 All notable changes to MonKeys are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.1.0] — 2026-07-13
+
+### Fixed
+- **Auto-updater actually works now.** The app was sandboxed without network access, so every update check was silently blocked — and the sandbox would also have prevented installing updates into /Applications. The App Sandbox has been removed (required for a self-updating app distributed outside the App Store); all statistics, medals, streaks and presets are migrated automatically from the old sandbox container on first launch.
+
+### Changed
+- **Redesigned mascot**: solid-silhouette monkey (same language as the status bar icon) holding a corded keyring with two keycaps — negative-space face, detail that appears only at larger sizes.
+
+### Added — student pack
+- **Study Session** (menu → Modes): a 25-minute focus block with quiet sounds, then a 5-minute break, with gentle chimes and remaining time in the menu.
+- **Study List** (menu → Games → Import Study List…): import a text file of vocabulary/phrases (one per line) and type them as a new difficulty in the Speed Challenge.
+- **Daily typing goal** (Settings → General): pick a keystroke goal; progress shows in the Games menu and a chime celebrates reaching it.
+
 ## [2.0.0] — 2026-07-13
 
 ### Added

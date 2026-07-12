@@ -1,6 +1,7 @@
 @preconcurrency import Cocoa
 import Carbon
 import ServiceManagement
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -33,6 +34,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let audioMonitor = AudioOutputMonitor()
     private let deviceRuleStore = DeviceRuleStore()
     private var lastAppState = AppSoundState(autoMuted: false, profileRaw: nil, volume: nil, reason: nil)
+
+    // Study session (pomodoro 25+5): one fire-at-end timer per phase; the
+    // menu computes the remaining time when it opens (it rebuilds itself).
+    private enum StudyPhase { case study, pause }
+    private var studyPhase: StudyPhase?
+    private var studyEndDate: Date?
+    private var studyTimer: Timer?
+    private var focusBeforeStudy = false
 
     // The menu is rebuilt on every open (menuNeedsUpdate), so almost no
     // item references are needed. The slider label survives while dragging.
@@ -133,6 +142,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard let self else { return }
                 self.typingStats.updatePeakWPM(self.wpmTracker.currentWPM())
                 self.typingStats.flushIfDirty()
+
+                // Daily goal: one gentle chime the moment it's reached.
+                let goal = AppSettings.dailyGoal
+                if goal > 0, AppSettings.statsEnabled,
+                   self.typingStats.getTodayCount() >= goal,
+                   let day = UserDefaults.standard.string(forKey: SettingsKey.todayDate),
+                   UserDefaults.standard.string(forKey: SettingsKey.goalCelebratedDay) != day {
+                    UserDefaults.standard.set(day, forKey: SettingsKey.goalCelebratedDay)
+                    self.soundEngine.playSuccess(semitone: 12)
+                }
             }
         }
 
@@ -308,6 +327,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if appProfileManager.isOverrideActive {
             return prefix + L.shared.sf("status_override", front)
+        }
+        if studyPhase == .study, let end = studyEndDate {
+            let mins = max(Int(ceil(end.timeIntervalSinceNow / 60)), 0)
+            return prefix + L.shared.sf("status_study", mins)
         }
         if isFocusMode {
             return prefix + L.shared.s("status_focus")
@@ -504,6 +527,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         meetingsItem.state = appProfileManager.isEnabled ? .on : .off
         submenu.addItem(meetingsItem)
 
+        // Study session (pomodoro): quiet voice for 25 min, then a 5-min break.
+        submenu.addItem(.separator())
+        if let phase = studyPhase, let end = studyEndDate {
+            let mins = max(Int(ceil(end.timeIntervalSinceNow / 60)), 0)
+            let key = phase == .study ? "study_left" : "break_left"
+            submenu.addItem(infoItem(L.shared.sf(key, mins), size: 11, bold: false))
+            let stopItem = NSMenuItem(title: L.shared.s("menu_study_stop"), action: #selector(toggleStudySession), keyEquivalent: "")
+            stopItem.target = self
+            submenu.addItem(stopItem)
+        } else {
+            let studyItem = NSMenuItem(title: L.shared.s("menu_study_start"), action: #selector(toggleStudySession), keyEquivalent: "")
+            studyItem.target = self
+            studyItem.image = symbol("book")
+            if #available(macOS 14.4, *) { studyItem.subtitle = L.shared.s("sub_study") }
+            submenu.addItem(studyItem)
+        }
+
         return submenu
     }
 
@@ -528,8 +568,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         submenu.addItem(.separator())
         submenu.addItem(infoItem(GameProgress.shared.missionMenuTitle, size: 11, bold: false))
         submenu.addItem(infoItem(L.shared.sf("streak_days", GameProgress.shared.currentStreak), size: 11, bold: false))
+        if AppSettings.dailyGoal > 0 {
+            let today = typingStats.getTodayCount()
+            let line = today >= AppSettings.dailyGoal
+                ? L.shared.s("goal_done")
+                : L.shared.sf("goal_progress",
+                              typingStats.formatNumber(today),
+                              typingStats.formatNumber(AppSettings.dailyGoal))
+            submenu.addItem(infoItem(line, size: 11, bold: false))
+        }
+
+        submenu.addItem(.separator())
+        let importItem = NSMenuItem(title: L.shared.s("menu_study_import"), action: #selector(importStudyList), keyEquivalent: "")
+        importItem.target = self
+        submenu.addItem(importItem)
 
         return submenu
+    }
+
+    // MARK: - Study session & study list
+
+    @objc private func toggleStudySession() {
+        if studyPhase == nil {
+            focusBeforeStudy = isFocusMode
+            isFocusMode = true
+            studyPhase = .study
+            scheduleStudyFire(minutes: 25)
+            applyEffectiveState()
+        } else {
+            endStudySession(chime: false)
+        }
+    }
+
+    private func scheduleStudyFire(minutes: Int) {
+        studyTimer?.invalidate()
+        let end = Date(timeIntervalSinceNow: TimeInterval(minutes * 60))
+        studyEndDate = end
+        let timer = Timer(fire: end, interval: 0, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.studyPhaseEnded()
+            }
+        }
+        timer.tolerance = 2
+        RunLoop.main.add(timer, forMode: .common)
+        studyTimer = timer
+    }
+
+    private func studyPhaseEnded() {
+        switch studyPhase {
+        case .study:
+            // Gentle chime, focus back off, 5-minute break starts.
+            soundEngine.playSuccess(semitone: 12)
+            studyPhase = .pause
+            isFocusMode = focusBeforeStudy
+            scheduleStudyFire(minutes: 5)
+            applyEffectiveState()
+        case .pause:
+            endStudySession(chime: true)
+        case nil:
+            break
+        }
+    }
+
+    private func endStudySession(chime: Bool) {
+        studyTimer?.invalidate()
+        studyTimer = nil
+        studyPhase = nil
+        studyEndDate = nil
+        isFocusMode = focusBeforeStudy
+        if chime { soundEngine.playSuccess(semitone: 12) }
+        applyEffectiveState()
+    }
+
+    @objc private func importStudyList() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.plainText, .commaSeparatedText]
+        panel.allowsMultipleSelection = false
+        panel.message = L.shared.s("study_import_msg")
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let raw = (try? String(contentsOf: url, encoding: .utf8))
+            ?? (try? String(contentsOf: url, encoding: .isoLatin1))
+        let count = raw.map { StudyList.importText($0) } ?? 0
+
+        let alert = NSAlert()
+        alert.messageText = "MonKeys"
+        alert.informativeText = count > 0
+            ? L.shared.sf("study_import_done", count)
+            : L.shared.s("study_import_none")
+        alert.alertStyle = count > 0 ? .informational : .warning
+        alert.runModal()
     }
 
     // MARK: - Actions

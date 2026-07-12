@@ -24,6 +24,10 @@ enum SettingsKey {
     static let zenMode             = "MonkeysZenMode"
     static let language            = "MonkeysLanguage"
 
+    // Daily typing goal (0 = off) + the day it was last celebrated
+    static let dailyGoal           = "MonkeysDailyGoal"
+    static let goalCelebratedDay   = "MonkeysGoalCelebrated"
+
     // Per-app rules & meeting whitelist (JSON-encoded)
     static let perAppRules         = "MonkeysPerAppRules"
     static let meetingApps         = "MonkeysMeetingApps"
@@ -64,6 +68,12 @@ enum AppSettings {
     static var statsEnabled: Bool {
         get { UserDefaults.standard.object(forKey: SettingsKey.statsEnabled) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: SettingsKey.statsEnabled) }
+    }
+
+    /// Daily typing goal in keystrokes; 0 = disabled.
+    static var dailyGoal: Int {
+        get { UserDefaults.standard.object(forKey: SettingsKey.dailyGoal) as? Int ?? 0 }
+        set { UserDefaults.standard.set(newValue, forKey: SettingsKey.dailyGoal) }
     }
 
     static var savedProfileRaw: String? {

@@ -34,11 +34,13 @@ final class SpeedTypeView: NSView {
         case expert = 3
         case master = 4
         case drill = 6         // words weighted toward your weakest keys
+        case study = 7         // the user's imported study list (vocabulary…)
 
         var locKey: String {
             switch self {
             case .sprint: return "st_sprint"
             case .drill: return "st_drill"
+            case .study: return "st_study"
             case .beginner: return "st_beginner"
             case .intermediate: return "st_intermediate"
             case .expert: return "st_expert"
@@ -50,6 +52,7 @@ final class SpeedTypeView: NSView {
             switch self {
             case .sprint: return "⚡"
             case .drill: return "🎯"
+            case .study: return "📚"
             case .beginner: return "🌱"
             case .intermediate: return "🌿"
             case .expert: return "🌴"
@@ -61,6 +64,7 @@ final class SpeedTypeView: NSView {
             switch self {
             case .sprint: return NSColor(red: 0.4, green: 0.85, blue: 1.0, alpha: 1.0)
             case .drill: return NSColor(red: 0.75, green: 0.55, blue: 1.0, alpha: 1.0)
+            case .study: return NSColor(red: 0.35, green: 0.85, blue: 0.75, alpha: 1.0)
             case .beginner: return NSColor(red: 0.4, green: 0.9, blue: 0.4, alpha: 1.0)
             case .intermediate: return NSColor(red: 1.0, green: 0.8, blue: 0.2, alpha: 1.0)
             case .expert: return NSColor(red: 1.0, green: 0.5, blue: 0.2, alpha: 1.0)
@@ -76,6 +80,7 @@ final class SpeedTypeView: NSView {
             switch self {
             case .sprint: return 15.0
             case .drill: return 60.0
+            case .study: return 60.0
             case .beginner: return 60.0
             case .intermediate: return 60.0
             case .expert: return 60.0
@@ -85,6 +90,14 @@ final class SpeedTypeView: NSView {
 
         /// GameProgress medal mode key.
         var medalMode: String { self == .sprint ? "speed_sprint" : "speed" }
+    }
+
+    /// Levels offered in the select screen: the study level only appears
+    /// once the user has imported a list. Cached per menu visit — StudyList
+    /// caches too, but this keeps the render loop trivially cheap.
+    private var levels: [DifficultyLevel] {
+        StudyList.isAvailable ? DifficultyLevel.allCases
+                              : DifficultyLevel.allCases.filter { $0 != .study }
     }
 
     // MARK: - Callbacks
@@ -639,6 +652,9 @@ final class SpeedTypeView: NSView {
         switch selectedLevel {
         case .sprint:       pool = banks.intermediate
         case .drill:        pool = drillWords.isEmpty ? banks.intermediate : drillWords
+        case .study:
+            let list = StudyList.words()
+            pool = list.isEmpty ? banks.intermediate : list
         case .beginner:     pool = banks.beginner
         case .intermediate: pool = banks.intermediate
         case .expert:       pool = banks.expert
@@ -819,18 +835,18 @@ final class SpeedTypeView: NSView {
             selectedLevelIndex = max(selectedLevelIndex - 1, 0)
         } else {
             // Down: move selection downward (higher index)
-            selectedLevelIndex = min(selectedLevelIndex + 1, DifficultyLevel.allCases.count - 1)
+            selectedLevelIndex = min(selectedLevelIndex + 1, levels.count - 1)
         }
-        selectedLevel = DifficultyLevel.allCases[selectedLevelIndex]
+        selectedLevel = levels[selectedLevelIndex]
         loadHighScore()
     }
 
     func handleKeyTyped(_ char: Character) {
         if phase == .waiting {
             // Number keys 1-4 to select level directly
-            if let num = char.wholeNumberValue, num >= 1 && num <= DifficultyLevel.allCases.count {
+            if let num = char.wholeNumberValue, num >= 1 && num <= levels.count {
                 selectedLevelIndex = num - 1
-                selectedLevel = DifficultyLevel.allCases[selectedLevelIndex]
+                selectedLevel = levels[selectedLevelIndex]
                 loadHighScore()
                 return
             }
@@ -917,14 +933,14 @@ final class SpeedTypeView: NSView {
         let cardWidth: CGFloat = w - 60
         let cardHeight: CGFloat = 56
         let cardSpacing: CGFloat = 8
-        let totalCardsHeight = CGFloat(DifficultyLevel.allCases.count) * (cardHeight + cardSpacing)
+        let totalCardsHeight = CGFloat(levels.count) * (cardHeight + cardSpacing)
         let startY = h / 2 + totalCardsHeight / 2 - 46
         let cardY = startY - CGFloat(index) * (cardHeight + cardSpacing)
         return CGRect(x: 30, y: cardY, width: cardWidth, height: cardHeight)
     }
 
     private func levelCardIndex(at point: CGPoint) -> Int? {
-        for index in 0..<DifficultyLevel.allCases.count where levelCardRect(index: index).contains(point) {
+        for index in 0..<levels.count where levelCardRect(index: index).contains(point) {
             return index
         }
         return nil
@@ -970,7 +986,7 @@ final class SpeedTypeView: NSView {
                     beginCountdown()
                 } else {
                     selectedLevelIndex = index
-                    selectedLevel = DifficultyLevel.allCases[index]
+                    selectedLevel = levels[index]
                     loadHighScore()
                     setNeedsDisplay(bounds)
                 }
@@ -1082,10 +1098,10 @@ final class SpeedTypeView: NSView {
         // Draw level cards
         let cardHeight: CGFloat = 56
         let cardSpacing: CGFloat = 8
-        let totalCardsHeight = CGFloat(DifficultyLevel.allCases.count) * (cardHeight + cardSpacing)
+        let totalCardsHeight = CGFloat(levels.count) * (cardHeight + cardSpacing)
         let startY = h / 2 + totalCardsHeight / 2 - 46
 
-        for (index, level) in DifficultyLevel.allCases.enumerated() {
+        for (index, level) in levels.enumerated() {
             let cardRect = levelCardRect(index: index)
             let isSelected = index == selectedLevelIndex
             let isHovered = index == hoveredLevel
@@ -1165,7 +1181,7 @@ final class SpeedTypeView: NSView {
         }
 
         // Navigation hint
-        let navHintY = startY - CGFloat(DifficultyLevel.allCases.count) * (cardHeight + cardSpacing) - 10
+        let navHintY = startY - CGFloat(levels.count) * (cardHeight + cardSpacing) - 10
         drawCentered(L.shared.s("st_nav_hint"), y: navHintY, size: 11,
                      color: NSColor(white: 0.45, alpha: 0.8), in: w)
 

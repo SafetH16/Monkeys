@@ -11,7 +11,7 @@ Procedurally synthesized key sounds · per-app profiles · typing games · zero 
 [![Build](https://github.com/SafetH16/Monkeys/actions/workflows/build.yml/badge.svg)](https://github.com/SafetH16/Monkeys/actions/workflows/build.yml)
 ![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-111111?logo=apple&logoColor=white)
-![Version](https://img.shields.io/badge/version-2.0.0-4B8BBE)
+![Version](https://img.shields.io/badge/version-2.1.0-4B8BBE)
 [![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
 
 [Install](#install) · [Features](#features) · [Privacy & security](#privacy--security) · [Build from source](#build-from-source) · [Changelog](CHANGELOG.md)
@@ -34,6 +34,7 @@ Procedurally synthesized key sounds · per-app profiles · typing games · zero 
 | 🎧 **Device awareness** | Knows where the sound is going: per-output rules (mute on speakers, full volume in headphones), current output shown in the menu, engine survives device switches |
 | 🤫 **Meeting mode** | Auto-mutes when Zoom, Teams, FaceTime & co. come to the front (configurable whitelist) |
 | 🧘 **Focus & Game modes** | One-click quiet profile at low volume, or boosted WASD/Space for gaming |
+| 📚 **Student tools** | 25+5 study sessions with chimes, import your vocabulary as a typing exercise, daily typing goal |
 | 🎮 **Typing games** | *Save the Bananas* (waves, boss bananas, weekly duel, unlockable palettes) and *Speed Challenge* (5 difficulties + weak-key drill, ghost curve, flow tiers with dynamic music) |
 | 🏅 **Progression** | Medals per mode, daily missions, play streak — and a monkey typing rank from *Capuchin* to *Silverback* |
 | 📊 **Statistics** | Today/all-time counters, peak WPM, keyboard heatmap, top keys — aggregate-only, clearable |

@@ -57,6 +57,7 @@ swiftc -o "${BUILD_DIR}/${APP_NAME}" \
   "${SCRIPT_DIR}/Monkeys/UpdaterToken.swift" \
   "${SCRIPT_DIR}/Monkeys/AudioOutputMonitor.swift" \
   "${SCRIPT_DIR}/Monkeys/MascotIcon.swift" \
+  "${SCRIPT_DIR}/Monkeys/StudyList.swift" \
   -framework Cocoa \
   -framework AVFoundation \
   -framework CoreGraphics \

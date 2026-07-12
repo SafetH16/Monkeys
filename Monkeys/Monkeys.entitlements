@@ -2,8 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>com.apple.security.app-sandbox</key>
-	<true/>
+	<!-- App Sandbox removed in v2.1.0: the self-replacing auto-updater needs
+	     network access and write access to /Applications, both of which the
+	     sandbox forbids (child processes inherit it). Revisit when moving to
+	     Developer ID + Sparkle-style XPC or the App Store. -->
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
 </dict>
