@@ -13,7 +13,7 @@ final class OnboardingWindow: NSWindow {
 
     init() {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 330),
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 370),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -38,14 +38,14 @@ final class OnboardingWindow: NSWindow {
         let iconLabel = NSTextField(labelWithString: "🐒⌨️")
         iconLabel.font = NSFont.systemFont(ofSize: 44)
         iconLabel.alignment = .center
-        iconLabel.frame = NSRect(x: 20, y: 250, width: 400, height: 56)
+        iconLabel.frame = NSRect(x: 20, y: 290, width: 400, height: 56)
         content.addSubview(iconLabel)
 
         // Title
         let titleLabel = NSTextField(labelWithString: L.shared.s("ob_title"))
         titleLabel.font = NSFont.systemFont(ofSize: 20, weight: .bold)
         titleLabel.alignment = .center
-        titleLabel.frame = NSRect(x: 20, y: 214, width: 400, height: 28)
+        titleLabel.frame = NSRect(x: 20, y: 254, width: 400, height: 28)
         content.addSubview(titleLabel)
 
         // Body: why the permission is needed + the steps
@@ -53,7 +53,7 @@ final class OnboardingWindow: NSWindow {
         bodyLabel.font = NSFont.systemFont(ofSize: 13)
         bodyLabel.textColor = .secondaryLabelColor
         bodyLabel.alignment = .center
-        bodyLabel.frame = NSRect(x: 40, y: 96, width: 360, height: 110)
+        bodyLabel.frame = NSRect(x: 40, y: 106, width: 360, height: 140)
         content.addSubview(bodyLabel)
 
         // Primary action
@@ -62,7 +62,7 @@ final class OnboardingWindow: NSWindow {
         button.bezelStyle = .rounded
         button.controlSize = .large
         button.keyEquivalent = "\r"
-        button.frame = NSRect(x: 120, y: 44, width: 200, height: 36)
+        button.frame = NSRect(x: 120, y: 52, width: 200, height: 36)
         content.addSubview(button)
 
         // Reassurance footnote
@@ -70,7 +70,7 @@ final class OnboardingWindow: NSWindow {
         noteLabel.font = NSFont.systemFont(ofSize: 11)
         noteLabel.textColor = .tertiaryLabelColor
         noteLabel.alignment = .center
-        noteLabel.frame = NSRect(x: 20, y: 16, width: 400, height: 18)
+        noteLabel.frame = NSRect(x: 20, y: 20, width: 400, height: 18)
         content.addSubview(noteLabel)
     }
 

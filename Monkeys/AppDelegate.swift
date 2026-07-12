@@ -62,9 +62,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 1. Check accessibility permission — friendly onboarding window
         if !KeyboardMonitor.checkAccessibilityPermission() {
             let onboarding = OnboardingWindow()
-            onboarding.onOpenSettings = { [weak self] in
+            onboarding.onOpenSettings = {
                 KeyboardMonitor.requestAccessibilityPermission()
-                self?.onboardingWindow?.close()
+                // The AX prompt only appears the very first time an app asks.
+                // Open the Accessibility pane directly so the button always
+                // does something visible; the window closes by itself once
+                // the permission is granted (see permission timer).
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                    NSWorkspace.shared.open(url)
+                }
             }
             onboardingWindow = onboarding
             onboarding.center()
