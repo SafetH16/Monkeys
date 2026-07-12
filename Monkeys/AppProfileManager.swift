@@ -202,6 +202,13 @@ final class AppProfileManager: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// True while the manual unmute override is holding for the frontmost app.
+    var isOverrideActive: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return manualOverrideBundleID != nil && manualOverrideBundleID == currentBundleID
+    }
+
     /// Re-applies the rules for the app that is frontmost right now
     /// (used after rules or the whitelist change from Settings).
     func reevaluate() {

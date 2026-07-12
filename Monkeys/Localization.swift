@@ -453,6 +453,132 @@ final class L: @unchecked Sendable {
                 .zh: "15秒一口气 — 立即重来",
                 .ko: "15초 한 호흡 — 바로 재시작",
             ],
+            // ── Redesigned menu bar (v1.8) ──
+            "menu_sounds": [
+                .en: "Sounds Enabled", .it: "Suoni attivati", .es: "Sonidos activados",
+                .fr: "Sons activés", .de: "Sounds aktiviert", .pt: "Sons ativados",
+                .ja: "サウンド有効", .zh: "声音已启用", .ko: "사운드 켜짐",
+            ],
+            "menu_preset": [
+                .en: "Preset", .it: "Preset", .es: "Preset",
+                .fr: "Préréglage", .de: "Preset", .pt: "Preset",
+                .ja: "プリセット", .zh: "预设", .ko: "프리셋",
+            ],
+            "menu_preview": [
+                .en: "Play Preview", .it: "Riproduci anteprima", .es: "Reproducir prueba",
+                .fr: "Écouter un aperçu", .de: "Vorschau abspielen", .pt: "Tocar prévia",
+                .ja: "プレビューを再生", .zh: "播放预览", .ko: "미리듣기 재생",
+            ],
+            "menu_modes": [
+                .en: "Modes", .it: "Modalità", .es: "Modos",
+                .fr: "Modes", .de: "Modi", .pt: "Modos",
+                .ja: "モード", .zh: "模式", .ko: "모드",
+            ],
+            "menu_mode_game": [
+                .en: "Game", .it: "Gioco", .es: "Juego",
+                .fr: "Jeu", .de: "Spiel", .pt: "Jogo",
+                .ja: "ゲーム", .zh: "游戏", .ko: "게임",
+            ],
+            "menu_mode_meetings": [
+                .en: "Mute in Meetings", .it: "Silenzia nelle riunioni", .es: "Silenciar en reuniones",
+                .fr: "Couper en réunion", .de: "In Meetings stummschalten", .pt: "Silenciar em reuniões",
+                .ja: "会議中はミュート", .zh: "会议时静音", .ko: "회의 중 음소거",
+            ],
+            "menu_games": [
+                .en: "Games", .it: "Giochi", .es: "Juegos",
+                .fr: "Jeux", .de: "Spiele", .pt: "Jogos",
+                .ja: "ゲーム", .zh: "游戏", .ko: "게임",
+            ],
+            "menu_stats_panel": [
+                .en: "Statistics…", .it: "Statistiche…", .es: "Estadísticas…",
+                .fr: "Statistiques…", .de: "Statistiken…", .pt: "Estatísticas…",
+                .ja: "統計…", .zh: "统计…", .ko: "통계…",
+            ],
+            "menu_quit": [
+                .en: "Quit MonKeys", .it: "Esci da MonKeys", .es: "Salir de MonKeys",
+                .fr: "Quitter MonKeys", .de: "MonKeys beenden", .pt: "Encerrar MonKeys",
+                .ja: "MonKeysを終了", .zh: "退出 MonKeys", .ko: "MonKeys 종료",
+            ],
+            "menu_music": [
+                .en: "Background Music", .it: "Musica di sottofondo", .es: "Música de fondo",
+                .fr: "Musique de fond", .de: "Hintergrundmusik", .pt: "Música de fundo",
+                .ja: "BGM", .zh: "背景音乐", .ko: "배경 음악",
+            ],
+            "menu_mute_in": [
+                .en: "Mute in %@", .it: "Silenzia in %@", .es: "Silenciar en %@",
+                .fr: "Couper dans %@", .de: "In %@ stummschalten", .pt: "Silenciar em %@",
+                .ja: "%@でミュート", .zh: "在 %@ 中静音", .ko: "%@에서 음소거",
+            ],
+            "menu_rule_for": [
+                .en: "Create Rule for %@…", .it: "Crea regola per %@…", .es: "Crear regla para %@…",
+                .fr: "Créer une règle pour %@…", .de: "Regel für %@ erstellen…", .pt: "Criar regra para %@…",
+                .ja: "%@のルールを作成…", .zh: "为 %@ 创建规则…", .ko: "%@ 규칙 만들기…",
+            ],
+            "menu_rule_edit": [
+                .en: "Edit Rule for %@…", .it: "Modifica regola per %@…", .es: "Editar regla de %@…",
+                .fr: "Modifier la règle de %@…", .de: "Regel für %@ bearbeiten…", .pt: "Editar regra de %@…",
+                .ja: "%@のルールを編集…", .zh: "编辑 %@ 的规则…", .ko: "%@ 규칙 편집…",
+            ],
+            "menu_rule_none": [
+                .en: "Active rule: none", .it: "Regola attiva: nessuna", .es: "Regla activa: ninguna",
+                .fr: "Règle active : aucune", .de: "Aktive Regel: keine", .pt: "Regra ativa: nenhuma",
+                .ja: "有効なルール: なし", .zh: "生效规则：无", .ko: "활성 규칙: 없음",
+            ],
+            "menu_rule_active": [
+                .en: "Active rule: %@", .it: "Regola attiva: %@", .es: "Regla activa: %@",
+                .fr: "Règle active : %@", .de: "Aktive Regel: %@", .pt: "Regra ativa: %@",
+                .ja: "有効なルール: %@", .zh: "生效规则：%@", .ko: "활성 규칙: %@",
+            ],
+            "menu_current_app": [
+                .en: "Current App", .it: "App corrente", .es: "App actual",
+                .fr: "App active", .de: "Aktuelle App", .pt: "App atual",
+                .ja: "現在のアプリ", .zh: "当前应用", .ko: "현재 앱",
+            ],
+            "sub_focus": [
+                .en: "Volume 30% · silent voice", .it: "Volume al 30% · voce silenziosa", .es: "Volumen 30% · voz silenciosa",
+                .fr: "Volume 30 % · voix discrète", .de: "Lautstärke 30% · leise Stimme", .pt: "Volume 30% · voz silenciosa",
+                .ja: "音量30%・静かな音", .zh: "音量30% · 静音音色", .ko: "볼륨 30% · 조용한 소리",
+            ],
+            "sub_game": [
+                .en: "WASD & Space stand out", .it: "WASD e Spazio in evidenza", .es: "WASD y Espacio resaltados",
+                .fr: "WASD et Espace en avant", .de: "WASD & Leertaste betont", .pt: "WASD e Espaço em destaque",
+                .ja: "WASDとスペースを強調", .zh: "突出 WASD 和空格", .ko: "WASD·스페이스 강조",
+            ],
+            "status_active": [
+                .en: "Active · %@", .it: "Attivo · %@", .es: "Activo · %@",
+                .fr: "Actif · %@", .de: "Aktiv · %@", .pt: "Ativo · %@",
+                .ja: "有効 · %@", .zh: "已启用 · %@", .ko: "활성 · %@",
+            ],
+            "status_paused": [
+                .en: "Paused", .it: "In pausa", .es: "En pausa",
+                .fr: "En pause", .de: "Pausiert", .pt: "Pausado",
+                .ja: "一時停止中", .zh: "已暂停", .ko: "일시 중지됨",
+            ],
+            "status_muted_meeting": [
+                .en: "Muted · meeting (%@)", .it: "Silenziato · riunione (%@)", .es: "Silenciado · reunión (%@)",
+                .fr: "Coupé · réunion (%@)", .de: "Stumm · Meeting (%@)", .pt: "Mudo · reunião (%@)",
+                .ja: "ミュート · 会議 (%@)", .zh: "静音 · 会议 (%@)", .ko: "음소거 · 회의 (%@)",
+            ],
+            "status_muted_rule": [
+                .en: "Muted · app rule (%@)", .it: "Silenziato · regola (%@)", .es: "Silenciado · regla (%@)",
+                .fr: "Coupé · règle (%@)", .de: "Stumm · App-Regel (%@)", .pt: "Mudo · regra (%@)",
+                .ja: "ミュート · ルール (%@)", .zh: "静音 · 规则 (%@)", .ko: "음소거 · 규칙 (%@)",
+            ],
+            "status_override": [
+                .en: "Back on in %@ until app switch", .it: "Riattivato in %@ fino al cambio app", .es: "Reactivado en %@ hasta cambiar de app",
+                .fr: "Réactivé dans %@ jusqu'au changement", .de: "Wieder an in %@ bis zum App-Wechsel", .pt: "Reativado em %@ até trocar de app",
+                .ja: "%@で再開（アプリ切替まで）", .zh: "在 %@ 中恢复（切换应用前）", .ko: "%@에서 재활성 (앱 전환 시까지)",
+            ],
+            "status_focus": [
+                .en: "Focus · volume 30%", .it: "Focus · volume 30%", .es: "Focus · volumen 30%",
+                .fr: "Focus · volume 30 %", .de: "Fokus · Lautstärke 30%", .pt: "Foco · volume 30%",
+                .ja: "フォーカス · 音量30%", .zh: "专注 · 音量30%", .ko: "집중 · 볼륨 30%",
+            ],
+            "status_typing": [
+                .en: "%d WPM · %@ keys today", .it: "%d WPM · %@ tasti oggi", .es: "%d WPM · %@ teclas hoy",
+                .fr: "%d WPM · %@ touches aujourd'hui", .de: "%d WPM · %@ Tasten heute", .pt: "%d WPM · %@ teclas hoje",
+                .ja: "%d WPM · 今日%@キー", .zh: "%d WPM · 今日%@键", .ko: "%d WPM · 오늘 %@키",
+            ],
             "g_wave": [
                 .en: "Wave %d", .it: "Ondata %d", .es: "Oleada %d",
                 .fr: "Vague %d", .de: "Welle %d", .pt: "Onda %d",

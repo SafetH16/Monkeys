@@ -3,7 +3,7 @@ import Carbon
 import ServiceManagement
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private var statusItem: NSStatusItem!
     private let soundEngine = SoundEngine()
@@ -27,22 +27,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isFocusMode = false
     private var isGameMode = false
 
-    // Menu item references for state updates
-    private var toggleMenuItem: NSMenuItem!
-    private var profileMenuItems: [NSMenuItem] = []
-    private var volumeSlider: NSSlider!
-    private var shortcutMenuItem: NSMenuItem!
-    private var wpmMenuItem: NSMenuItem!
-    private var statsMenuItem: NSMenuItem!
-    private var autoMuteMenuItem: NSMenuItem!
-    private var peakWpmMenuItem: NSMenuItem!
-    private var musicMenuItem: NSMenuItem!
-    private var loginMenuItem: NSMenuItem!
-    private var focusMenuItem: NSMenuItem!
-    private var gameModeMenuItem: NSMenuItem!
-    private var visualizerMenuItem: NSMenuItem!
-    private var missionMenuItem: NSMenuItem!
-    private var streakMenuItem: NSMenuItem!
+    // The menu is rebuilt on every open (menuNeedsUpdate), so almost no
+    // item references are needed. The slider label survives while dragging.
+    private var volumeSliderLabel: NSTextField?
+    private var lastAutoMuteReason: AutoMuteReason?
 
     private let allProfiles: [SoundProfile] = [
         .blue, .brown, .red, .black, .silentRed, .speedSilver,
@@ -122,33 +110,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         appProfileManager.start()
 
-        // 6. Start WPM timer
+        // 6. Housekeeping timer: peak-WPM tracking + batched stats flush.
+        // (The menu needs no timer: it rebuilds itself on every open.)
         wpmTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                let wpm = self.wpmTracker.currentWPM()
-                let wpmEmoji: String
-                if wpm >= 80 { wpmEmoji = "🚀" }
-                else if wpm >= 50 { wpmEmoji = "⚡" }
-                else if wpm >= 30 { wpmEmoji = "✍️" }
-                else if wpm > 0 { wpmEmoji = "🐢" }
-                else { wpmEmoji = "💤" }
-                self.wpmMenuItem.title = "\(wpmEmoji) \(L.shared.sf("writing_wpm", wpm))"
-                self.typingStats.updatePeakWPM(wpm)
-                let tc = self.typingStats.getTodayCount()
-                let tEmoji: String
-                if tc >= 10000 { tEmoji = "🔥" }
-                else if tc >= 5000 { tEmoji = "💪" }
-                else if tc >= 1000 { tEmoji = "⌨️" }
-                else { tEmoji = "🐵" }
-                self.statsMenuItem.title = "\(tEmoji) \(L.shared.sf("today_keys", self.typingStats.formatNumber(tc)))"
-                self.peakWpmMenuItem.title = L.shared.sf("record_wpm", self.typingStats.getPeakWPM())
-                self.missionMenuItem.title = GameProgress.shared.missionMenuTitle
-                self.streakMenuItem.title = L.shared.sf("streak_days", GameProgress.shared.currentStreak)
-                // Persist batched keystroke counters away from the tap thread
+                self.typingStats.updatePeakWPM(self.wpmTracker.currentWPM())
                 self.typingStats.flushIfDirty()
             }
         }
+
+        // 6b. Apply persisted audio settings (the menu no longer does this)
+        soundEngine.setVolume(Float(AppSettings.volume) / 100.0)
+        soundEngine.setMusicEnabled(AppSettings.musicEnabled)
+        restoreUserVoice()
         
         // 7. Restore the keyboard visualizer if it was visible last session
         if UserDefaults.standard.bool(forKey: SettingsKey.visualizerVisible) {
@@ -189,248 +164,304 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateStatusItem()
-        statusItem.menu = buildMenu()
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
     }
 
-    private func buildMenu() -> NSMenu {
-        let menu = NSMenu()
+    // MARK: - Menu (rebuilt on every open — always fresh, no timers)
 
-        // 1. Title
-        let titleItem = NSMenuItem(title: "🐒 Monkeys", action: nil, keyEquivalent: "")
-        titleItem.attributedTitle = NSAttributedString(
-            string: "🐒 Monkeys",
-            attributes: [.font: NSFont.boldSystemFont(ofSize: 14)]
-        )
-        titleItem.isEnabled = false
-        menu.addItem(titleItem)
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === statusItem.menu else { return }
+        rebuildRootMenu(menu)
+    }
+
+    private func rebuildRootMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        // ── Status block: state + typing at a glance ──
+        menu.addItem(infoItem(statusLine(), size: 12, bold: true))
+        let wpm = wpmTracker.currentWPM()
+        let today = typingStats.formatNumber(typingStats.getTodayCount())
+        menu.addItem(infoItem(L.shared.sf("status_typing", wpm, today), size: 11, bold: false))
         menu.addItem(.separator())
 
-        // 2. Toggle + WPM (compact top section)
-        toggleMenuItem = NSMenuItem(title: L.shared.s("enabled"), action: #selector(toggleEnabled), keyEquivalent: "")
-        toggleMenuItem.target = self
-        menu.addItem(toggleMenuItem)
+        // ── Quick controls: the three everyday actions ──
+        let soundsItem = NSMenuItem(title: L.shared.s("menu_sounds"), action: #selector(toggleEnabled), keyEquivalent: "")
+        soundsItem.target = self
+        soundsItem.state = (isEnabled && !isAutoMuted) ? .on : .off
+        soundsItem.image = symbol("speaker.wave.2")
+        applyShortcutEquivalent(to: soundsItem)
+        menu.addItem(soundsItem)
 
-        wpmMenuItem = NSMenuItem(title: L.shared.sf("writing_wpm", 0), action: nil, keyEquivalent: "")
-        wpmMenuItem.isEnabled = false
-        menu.addItem(wpmMenuItem)
+        menu.addItem(volumeSliderItem())
 
+        let presetItem = NSMenuItem(title: L.shared.s("menu_preset"), action: nil, keyEquivalent: "")
+        presetItem.image = symbol("slider.horizontal.3")
+        menu.setSubmenu(buildPresetSubmenu(), for: presetItem)
+        menu.addItem(presetItem)
         menu.addItem(.separator())
 
-        // 3. Game + Shortcut
-        let gameItem = NSMenuItem(title: L.shared.s("game_bananas"), action: #selector(startGame), keyEquivalent: "g")
-        gameItem.target = self
-        menu.addItem(gameItem)
+        // ── Context & modes ──
+        menu.addItem(currentAppItem())
 
-        let speedItem = NSMenuItem(title: L.shared.s("game_speed"), action: #selector(startSpeedType), keyEquivalent: "t")
-        speedItem.target = self
-        menu.addItem(speedItem)
+        let modesItem = NSMenuItem(title: L.shared.s("menu_modes"), action: nil, keyEquivalent: "")
+        modesItem.image = symbol("switch.2")
+        menu.setSubmenu(buildModesSubmenu(), for: modesItem)
+        menu.addItem(modesItem)
 
-        missionMenuItem = NSMenuItem(title: GameProgress.shared.missionMenuTitle, action: nil, keyEquivalent: "")
-        missionMenuItem.isEnabled = false
-        menu.addItem(missionMenuItem)
+        let visualizerItem = NSMenuItem(title: "Visualizer", action: #selector(toggleVisualizer), keyEquivalent: "")
+        visualizerItem.target = self
+        visualizerItem.state = (visualizerPanel?.isVisible ?? false) ? .on : .off
+        visualizerItem.image = symbol("keyboard")
+        menu.addItem(visualizerItem)
+        menu.addItem(.separator())
 
-        streakMenuItem = NSMenuItem(
-            title: L.shared.sf("streak_days", GameProgress.shared.currentStreak),
-            action: nil, keyEquivalent: ""
-        )
-        streakMenuItem.isEnabled = false
-        menu.addItem(streakMenuItem)
+        // ── Extras & panels ──
+        let gamesItem = NSMenuItem(title: L.shared.s("menu_games"), action: nil, keyEquivalent: "")
+        gamesItem.image = symbol("gamecontroller")
+        menu.setSubmenu(buildGamesSubmenu(), for: gamesItem)
+        menu.addItem(gamesItem)
 
-        shortcutMenuItem = NSMenuItem(title: "\(L.shared.s("shortcut_prefix")): \(getShortcutString())", action: #selector(changeShortcut), keyEquivalent: "")
-        shortcutMenuItem.target = self
-        menu.addItem(shortcutMenuItem)
-
-        autoMuteMenuItem = NSMenuItem(
-            title: appProfileManager.isEnabled ? L.shared.s("auto_mute_on") : L.shared.s("auto_mute_off"),
-            action: #selector(toggleAutoMute), keyEquivalent: ""
-        )
-        autoMuteMenuItem.target = self
-        menu.addItem(autoMuteMenuItem)
-
-        // Launch at login (macOS 13+)
-        if #available(macOS 13.0, *) {
-            let isLoginEnabled = SMAppService.mainApp.status == .enabled
-            loginMenuItem = NSMenuItem(
-                title: isLoginEnabled ? L.shared.s("launch_login_on") : L.shared.s("launch_login_off"),
-                action: #selector(toggleLaunchAtLogin), keyEquivalent: ""
-            )
-            loginMenuItem.target = self
-            menu.addItem(loginMenuItem)
-        }
-
-        // Quick modes + per-app quick actions
-        focusMenuItem = NSMenuItem(
-            title: isFocusMode ? L.shared.s("menu_focus_on") : L.shared.s("menu_focus_off"),
-            action: #selector(toggleFocusMode), keyEquivalent: ""
-        )
-        focusMenuItem.target = self
-        menu.addItem(focusMenuItem)
-
-        gameModeMenuItem = NSMenuItem(
-            title: isGameMode ? L.shared.s("menu_game_on") : L.shared.s("menu_game_off"),
-            action: #selector(toggleGameMode), keyEquivalent: ""
-        )
-        gameModeMenuItem.target = self
-        menu.addItem(gameModeMenuItem)
-
-        let visualizerVisible = visualizerPanel?.isVisible ?? false
-        visualizerMenuItem = NSMenuItem(
-            title: visualizerVisible ? L.shared.s("menu_visualizer_on") : L.shared.s("menu_visualizer_off"),
-            action: #selector(toggleVisualizer), keyEquivalent: ""
-        )
-        visualizerMenuItem.target = self
-        menu.addItem(visualizerMenuItem)
-
-        let muteAppItem = NSMenuItem(title: L.shared.s("menu_mute_app"), action: #selector(muteForCurrentApp), keyEquivalent: "")
-        muteAppItem.target = self
-        menu.addItem(muteAppItem)
-
-        let ruleAppItem = NSMenuItem(title: L.shared.s("menu_rule_app"), action: #selector(createProfileForCurrentApp), keyEquivalent: "")
-        ruleAppItem.target = self
-        menu.addItem(ruleAppItem)
+        let statsItem = NSMenuItem(title: L.shared.s("menu_stats_panel"), action: #selector(openStatsPanel), keyEquivalent: "")
+        statsItem.target = self
+        statsItem.image = symbol("chart.bar")
+        menu.addItem(statsItem)
 
         let settingsItem = NSMenuItem(title: L.shared.s("menu_settings"), action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
+        settingsItem.image = symbol("gearshape")
         menu.addItem(settingsItem)
-
         menu.addItem(.separator())
 
-        // 4. Volume (compact, no label) — restored from last session
-        let savedVolume = UserDefaults.standard.object(forKey: "MonkeysVolume") as? Int ?? 70
-        let sliderView = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-        let volIcon = NSTextField(labelWithString: "🔊")
-        volIcon.frame = NSRect(x: 4, y: 2, width: 20, height: 20)
-        volIcon.font = NSFont.systemFont(ofSize: 12)
-        sliderView.addSubview(volIcon)
-        volumeSlider = NSSlider(frame: NSRect(x: 26, y: 2, width: 164, height: 20))
-        volumeSlider.minValue = 0
-        volumeSlider.maxValue = 100
-        volumeSlider.integerValue = savedVolume
-        volumeSlider.target = self
-        volumeSlider.action = #selector(volumeChanged(_:))
-        sliderView.addSubview(volumeSlider)
-        let sliderMenuItem = NSMenuItem()
-        sliderMenuItem.view = sliderView
-        menu.addItem(sliderMenuItem)
-        soundEngine.setVolume(Float(savedVolume) / 100.0 * (isFocusMode ? 0.3 : 1.0))
+        let quitItem = NSMenuItem(title: L.shared.s("menu_quit"), action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+    }
 
-        let testItem = NSMenuItem(title: L.shared.s("menu_test_sound"), action: #selector(playTestSound), keyEquivalent: "")
-        testItem.target = self
-        menu.addItem(testItem)
+    // MARK: - Menu builders
 
-        // 4b. Game music toggle
-        let musicEnabled = UserDefaults.standard.object(forKey: "MonkeysMusicEnabled") as? Bool ?? true
-        soundEngine.setMusicEnabled(musicEnabled)
-        musicMenuItem = NSMenuItem(
-            title: musicEnabled ? L.shared.s("music_on") : L.shared.s("music_off"),
-            action: #selector(toggleMusic), keyEquivalent: ""
-        )
-        musicMenuItem.target = self
-        menu.addItem(musicMenuItem)
+    /// First menu row: answers "is it playing, with which voice — and if
+    /// not, exactly why?" without opening anything else.
+    private func statusLine() -> String {
+        let front = appProfileManager.frontmostApp?.name ?? "—"
+        let prefix = "MonKeys — "
+        if isAutoMuted {
+            let key = lastAutoMuteReason == .appRule ? "status_muted_rule" : "status_muted_meeting"
+            return prefix + L.shared.sf(key, front)
+        }
+        if !isEnabled {
+            return prefix + L.shared.s("status_paused")
+        }
+        if appProfileManager.isOverrideActive {
+            return prefix + L.shared.sf("status_override", front)
+        }
+        if isFocusMode {
+            return prefix + L.shared.s("status_focus")
+        }
+        return prefix + L.shared.sf("status_active", currentVoiceName())
+    }
 
-        // 5. Profile submenu
-        let profileItem = NSMenuItem(title: L.shared.s("sound_profile"), action: nil, keyEquivalent: "")
-        let profileSubmenu = NSMenu()
-        profileMenuItems = []
+    private func currentVoiceName() -> String {
+        if let custom = AppSettings.customPresetName {
+            return custom
+        }
+        if let raw = AppSettings.savedProfileRaw,
+           let profile = SoundProfile(rawValue: raw),
+           let idx = allProfiles.firstIndex(of: profile) {
+            return L.shared.s(profileLocKeys[idx])
+        }
+        return L.shared.s(profileLocKeys[0])
+    }
+
+    private func infoItem(_ text: String, size: CGFloat, bold: Bool) -> NSMenuItem {
+        let item = NSMenuItem()
+        item.attributedTitle = NSAttributedString(string: text, attributes: [
+            .font: bold ? NSFont.systemFont(ofSize: size, weight: .semibold)
+                        : NSFont.systemFont(ofSize: size),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+        item.isEnabled = false
+        return item
+    }
+
+    private func symbol(_ name: String) -> NSImage? {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil)
+    }
+
+    /// Shows the user's global shortcut as a native key equivalent on the
+    /// sounds toggle (display only — the real hook is the CGEvent tap).
+    private func applyShortcutEquivalent(to item: NSMenuItem) {
+        let (code, flags) = keyboardMonitor.currentShortcut
+        let keyString = stringForKeyCode(code)
+        guard keyString.count == 1 else { return }
+        item.keyEquivalent = keyString.lowercased()
+        var mods: NSEvent.ModifierFlags = []
+        if flags.contains(.maskControl) { mods.insert(.control) }
+        if flags.contains(.maskShift) { mods.insert(.shift) }
+        if flags.contains(.maskAlternate) { mods.insert(.option) }
+        if flags.contains(.maskCommand) { mods.insert(.command) }
+        item.keyEquivalentModifierMask = mods
+    }
+
+    private func volumeSliderItem() -> NSMenuItem {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 230, height: 26))
+
+        let iconView = NSImageView(frame: NSRect(x: 14, y: 5, width: 16, height: 16))
+        iconView.image = symbol("speaker.wave.2.fill")
+        iconView.contentTintColor = .secondaryLabelColor
+        container.addSubview(iconView)
+
+        let slider = NSSlider(frame: NSRect(x: 36, y: 3, width: 138, height: 20))
+        slider.minValue = 0
+        slider.maxValue = 100
+        slider.integerValue = AppSettings.volume
+        slider.target = self
+        slider.action = #selector(volumeChanged(_:))
+        container.addSubview(slider)
+
+        let label = NSTextField(labelWithString: "\(AppSettings.volume)%")
+        label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        label.textColor = .secondaryLabelColor
+        label.alignment = .right
+        label.frame = NSRect(x: 178, y: 5, width: 40, height: 16)
+        container.addSubview(label)
+        volumeSliderLabel = label
+
+        let item = NSMenuItem()
+        item.view = container
+        return item
+    }
+
+    private func buildPresetSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+        let activeRaw = AppSettings.customPresetName == nil ? AppSettings.savedProfileRaw : nil
 
         for (i, key) in profileLocKeys.enumerated() {
             let item = NSMenuItem(title: L.shared.s(key), action: #selector(selectProfile(_:)), keyEquivalent: "")
             item.target = self
             item.tag = i
-            profileMenuItems.append(item)
-            profileSubmenu.addItem(item)
-            if i == 8 { profileSubmenu.addItem(.separator()) }
+            item.state = (activeRaw == allProfiles[i].rawValue) ? .on : .off
+            submenu.addItem(item)
+            if i == 8 || i == 12 { submenu.addItem(.separator()) }
         }
 
-        profileMenuItems[0].state = .on
-        soundEngine.setProfile(.blue)
-
-        // Restore saved voice: custom preset wins over built-in profile
-        // (skipped while Focus Mode is forcing the silent voice)
-        if isFocusMode {
-            for item in profileMenuItems { item.state = .off }
-        } else if let customName = AppSettings.customPresetName,
-           let preset = presetStore.preset(named: customName) {
-            soundEngine.setCustomVoice(preset.params)
-            for item in profileMenuItems { item.state = .off }
-        } else if let savedRaw = UserDefaults.standard.string(forKey: SettingsKey.soundProfile),
-           let savedProfile = SoundProfile(rawValue: savedRaw),
-           let idx = allProfiles.firstIndex(of: savedProfile) {
-            soundEngine.setProfile(savedProfile)
-            for item in profileMenuItems { item.state = .off }
-            profileMenuItems[idx].state = .on
+        let userPresets = presetStore.all()
+        if !userPresets.isEmpty {
+            submenu.addItem(.separator())
+            for preset in userPresets {
+                let item = NSMenuItem(title: "👤 \(preset.name)", action: #selector(selectUserPreset(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = preset.name
+                item.state = (AppSettings.customPresetName == preset.name) ? .on : .off
+                submenu.addItem(item)
+            }
         }
 
-        menu.setSubmenu(profileSubmenu, for: profileItem)
-        menu.addItem(profileItem)
+        submenu.addItem(.separator())
+        let previewItem = NSMenuItem(title: L.shared.s("menu_preview"), action: #selector(playTestSound), keyEquivalent: "")
+        previewItem.target = self
+        submenu.addItem(previewItem)
+        return submenu
+    }
 
-        // 6. Stats submenu
-        let statsItem = NSMenuItem(title: L.shared.s("statistics"), action: nil, keyEquivalent: "")
-        let statsSubmenu = NSMenu()
-
-        let todayCount = typingStats.getTodayCount()
-        let emoji: String
-        if todayCount >= 10000 { emoji = "🔥" }
-        else if todayCount >= 5000 { emoji = "💪" }
-        else if todayCount >= 1000 { emoji = "⌨️" }
-        else { emoji = "🐵" }
-
-        statsMenuItem = NSMenuItem(
-            title: "\(emoji) \(L.shared.sf("today_keys", typingStats.formatNumber(todayCount)))",
-            action: nil, keyEquivalent: ""
-        )
-        statsMenuItem.isEnabled = false
-        statsSubmenu.addItem(statsMenuItem)
-
-        peakWpmMenuItem = NSMenuItem(title: L.shared.sf("record_wpm", typingStats.getPeakWPM()), action: nil, keyEquivalent: "")
-        peakWpmMenuItem.isEnabled = false
-        statsSubmenu.addItem(peakWpmMenuItem)
-
-        let totalItem = NSMenuItem(
-            title: L.shared.sf("total_keys", typingStats.formatNumber(typingStats.getAllTimeCount())),
-            action: nil, keyEquivalent: ""
-        )
-        totalItem.isEnabled = false
-        statsSubmenu.addItem(totalItem)
-
-        statsSubmenu.addItem(.separator())
-        let statsPanelItem = NSMenuItem(title: L.shared.s("stats_open"), action: #selector(openStatsPanel), keyEquivalent: "s")
-        statsPanelItem.target = self
-        statsSubmenu.addItem(statsPanelItem)
-
-        menu.setSubmenu(statsSubmenu, for: statsItem)
-        menu.addItem(statsItem)
-
-        // 7. Language submenu
-        let langItem = NSMenuItem(title: L.shared.s("language"), action: nil, keyEquivalent: "")
-        let langSubmenu = NSMenu()
-        for lang in L.Lang.allCases {
-            let langMenuItem = NSMenuItem(title: L.shared.s("lang_\(lang.rawValue)"), action: #selector(changeLanguage(_:)), keyEquivalent: "")
-            langMenuItem.target = self
-            langMenuItem.tag = lang.hashValue
-            langMenuItem.representedObject = lang.rawValue
-            langMenuItem.state = (lang == L.shared.current) ? .on : .off
-            langSubmenu.addItem(langMenuItem)
+    /// Contextual submenu named (and iconed) after the frontmost app.
+    private func currentAppItem() -> NSMenuItem {
+        let item = NSMenuItem()
+        guard let front = appProfileManager.frontmostApp else {
+            item.title = L.shared.s("menu_current_app")
+            item.isEnabled = false
+            return item
         }
-        menu.setSubmenu(langSubmenu, for: langItem)
-        menu.addItem(langItem)
+        item.title = front.name
+        if let icon = NSWorkspace.shared.frontmostApplication?.icon {
+            let resized = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
+                icon.draw(in: rect)
+                return true
+            }
+            item.image = resized
+        }
 
-        menu.addItem(.separator())
+        let submenu = NSMenu()
+        let rule = appProfileManager.rules.first { $0.bundleID == front.bundleID }
 
-        // 8. Info + Quit
-        let updateItem = NSMenuItem(title: L.shared.s("check_updates"), action: #selector(triggerCheckUpdates), keyEquivalent: "")
-        updateItem.target = self
-        menu.addItem(updateItem)
+        let muteItem = NSMenuItem(title: L.shared.sf("menu_mute_in", front.name),
+                                  action: #selector(muteForCurrentApp), keyEquivalent: "")
+        muteItem.target = self
+        muteItem.state = (rule?.enabled == true && rule?.muted == true) ? .on : .off
+        submenu.addItem(muteItem)
 
-        let infoItem = NSMenuItem(title: L.shared.s("info"), action: #selector(showInfo), keyEquivalent: "")
-        infoItem.target = self
-        menu.addItem(infoItem)
+        let ruleKey = rule == nil ? "menu_rule_for" : "menu_rule_edit"
+        let ruleAction = rule == nil ? #selector(createProfileForCurrentApp) : #selector(openSettings)
+        let ruleItem = NSMenuItem(title: L.shared.sf(ruleKey, front.name), action: ruleAction, keyEquivalent: "")
+        ruleItem.target = self
+        submenu.addItem(ruleItem)
 
-        let quitItem = NSMenuItem(title: L.shared.s("quit"), action: #selector(quitApp), keyEquivalent: "q")
-        quitItem.target = self
-        menu.addItem(quitItem)
+        submenu.addItem(.separator())
+        let statusText: String
+        if let rule {
+            var parts: [String] = []
+            if rule.muted { parts.append("🔇") }
+            if let raw = rule.profileRaw { parts.append(raw) }
+            if let volume = rule.volume { parts.append("\(volume)%") }
+            statusText = L.shared.sf("menu_rule_active", parts.isEmpty ? "✓" : parts.joined(separator: " · "))
+        } else {
+            statusText = L.shared.s("menu_rule_none")
+        }
+        submenu.addItem(infoItem(statusText, size: 11, bold: false))
 
-        return menu
+        item.submenu = submenu
+        return item
+    }
+
+    private func buildModesSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+
+        let focusItem = NSMenuItem(title: "Focus", action: #selector(toggleFocusMode), keyEquivalent: "")
+        focusItem.target = self
+        focusItem.state = isFocusMode ? .on : .off
+        if #available(macOS 14.4, *) { focusItem.subtitle = L.shared.s("sub_focus") }
+        submenu.addItem(focusItem)
+
+        let gameItem = NSMenuItem(title: L.shared.s("menu_mode_game"), action: #selector(toggleGameMode), keyEquivalent: "")
+        gameItem.target = self
+        gameItem.state = isGameMode ? .on : .off
+        if #available(macOS 14.4, *) { gameItem.subtitle = L.shared.s("sub_game") }
+        submenu.addItem(gameItem)
+
+        submenu.addItem(.separator())
+
+        let meetingsItem = NSMenuItem(title: L.shared.s("menu_mode_meetings"), action: #selector(toggleAutoMute), keyEquivalent: "")
+        meetingsItem.target = self
+        meetingsItem.state = appProfileManager.isEnabled ? .on : .off
+        submenu.addItem(meetingsItem)
+
+        return submenu
+    }
+
+    private func buildGamesSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+
+        let bananasItem = NSMenuItem(title: L.shared.s("game_bananas"), action: #selector(startGame), keyEquivalent: "g")
+        bananasItem.target = self
+        submenu.addItem(bananasItem)
+
+        let speedItem = NSMenuItem(title: L.shared.s("game_speed"), action: #selector(startSpeedType), keyEquivalent: "t")
+        speedItem.target = self
+        submenu.addItem(speedItem)
+
+        submenu.addItem(.separator())
+
+        let musicItem = NSMenuItem(title: L.shared.s("menu_music"), action: #selector(toggleMusic), keyEquivalent: "")
+        musicItem.target = self
+        musicItem.state = AppSettings.musicEnabled ? .on : .off
+        submenu.addItem(musicItem)
+
+        submenu.addItem(.separator())
+        submenu.addItem(infoItem(GameProgress.shared.missionMenuTitle, size: 11, bold: false))
+        submenu.addItem(infoItem(L.shared.sf("streak_days", GameProgress.shared.currentStreak), size: 11, bold: false))
+
+        return submenu
     }
 
     // MARK: - Actions
@@ -444,7 +475,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             isEnabled.toggle()
         }
-        toggleMenuItem.title = isEnabled ? L.shared.s("enabled") : L.shared.s("disabled")
         soundEngine.setEnabled(isEnabled)
         updateStatusItem()
     }
@@ -453,6 +483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Global manual mute always wins; auto-mute never flips `isEnabled`.
     private func applyAppSoundState(_ state: AppSoundState) {
         isAutoMuted = state.autoMuted
+        lastAutoMuteReason = state.reason
 
         // Volume: per-app override or the user's global setting (focus scales it).
         let baseVolume = state.volume ?? AppSettings.volume
@@ -468,13 +499,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         soundEngine.setEnabled(isEnabled && !state.autoMuted)
 
-        if state.autoMuted {
-            toggleMenuItem.title = state.reason == .meeting
-                ? L.shared.s("auto_muted_meeting")
-                : L.shared.s("auto_muted_rule")
-        } else {
-            toggleMenuItem.title = isEnabled ? L.shared.s("enabled") : L.shared.s("disabled")
-        }
         updateStatusItem()
     }
 
@@ -501,22 +525,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             restoreUserVoice()
             soundEngine.setVolume(Float(AppSettings.volume) / 100.0)
         }
-        focusMenuItem.title = isFocusMode ? L.shared.s("menu_focus_on") : L.shared.s("menu_focus_off")
     }
 
     @objc private func toggleGameMode() {
         isGameMode.toggle()
         soundEngine.setGameMode(isGameMode)
-        gameModeMenuItem.title = isGameMode ? L.shared.s("menu_game_on") : L.shared.s("menu_game_off")
     }
 
     @objc private func muteForCurrentApp() {
         guard let front = appProfileManager.frontmostApp else { return }
-        var rule = appProfileManager.rules.first { $0.bundleID == front.bundleID }
-            ?? PerAppRule(bundleID: front.bundleID, appName: front.name)
-        rule.muted = true
-        rule.enabled = true
-        appProfileManager.upsertRule(rule)
+        if var rule = appProfileManager.rules.first(where: { $0.bundleID == front.bundleID }) {
+            rule.muted.toggle()
+            rule.enabled = true
+            appProfileManager.upsertRule(rule)
+        } else {
+            var rule = PerAppRule(bundleID: front.bundleID, appName: front.name)
+            rule.muted = true
+            appProfileManager.upsertRule(rule)
+        }
     }
 
     @objc private func createProfileForCurrentApp() {
@@ -535,10 +561,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panel.visualizerView.stopTimer()
             panel.orderOut(nil)
             UserDefaults.standard.set(false, forKey: SettingsKey.visualizerVisible)
-            visualizerMenuItem.title = L.shared.s("menu_visualizer_off")
         } else {
             showVisualizer()
-            visualizerMenuItem.title = L.shared.s("menu_visualizer_on")
         }
     }
 
@@ -573,13 +597,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.isEnabled = enabled
                 self.soundEngine.setEnabled(enabled && !self.isAutoMuted)
-                self.toggleMenuItem.title = enabled ? L.shared.s("enabled") : L.shared.s("disabled")
                 self.updateStatusItem()
             }
             window.onGlobalChange = { [weak self] in
-                guard let self else { return }
-                self.statusItem.menu = self.buildMenu()
-                self.updateStatusItem()
+                self?.updateStatusItem()
             }
             settingsWindow = window
         }
@@ -591,32 +612,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleAutoMute() {
         appProfileManager.isEnabled.toggle()
-        autoMuteMenuItem.title = appProfileManager.isEnabled ? L.shared.s("auto_mute_on") : L.shared.s("auto_mute_off")
     }
 
     @objc private func volumeChanged(_ sender: NSSlider) {
         let volume = Float(sender.integerValue) / 100.0
-        soundEngine.setVolume(volume)
+        soundEngine.setVolume(volume * (isFocusMode ? 0.3 : 1.0))
         UserDefaults.standard.set(sender.integerValue, forKey: "MonkeysVolume")
+        volumeSliderLabel?.stringValue = "\(sender.integerValue)%"
     }
 
     @objc private func playTestSound() {
         soundEngine.playTestSound()
     }
 
-    @objc private func toggleLaunchAtLogin() {
-        guard #available(macOS 13.0, *) else { return }
-        do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-            } else {
-                try SMAppService.mainApp.register()
-            }
-        } catch {
-            print("LaunchAtLogin: toggle failed - \(error)")
-        }
-        let enabled = SMAppService.mainApp.status == .enabled
-        loginMenuItem.title = enabled ? L.shared.s("launch_login_on") : L.shared.s("launch_login_off")
+    @objc private func selectUserPreset(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String,
+              let preset = presetStore.preset(named: name) else { return }
+        soundEngine.setCustomVoice(preset.params)
+        AppSettings.customPresetName = name
+        soundEngine.playPreviewParams(preset.params)
     }
 
     @objc private func openStatsPanel() {
@@ -633,12 +647,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let enabled = !(UserDefaults.standard.object(forKey: "MonkeysMusicEnabled") as? Bool ?? true)
         UserDefaults.standard.set(enabled, forKey: "MonkeysMusicEnabled")
         soundEngine.setMusicEnabled(enabled)
-        musicMenuItem.title = enabled ? L.shared.s("music_on") : L.shared.s("music_off")
     }
 
     @objc private func selectProfile(_ sender: NSMenuItem) {
-        for item in profileMenuItems { item.state = .off }
-        sender.state = .on
         let idx = sender.tag
         guard idx >= 0 && idx < allProfiles.count else { return }
         let profile = allProfiles[idx]
@@ -649,36 +660,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         soundEngine.playPreviewClick(profile)
     }
 
-    @objc private func changeLanguage(_ sender: NSMenuItem) {
-        guard let code = sender.representedObject as? String,
-              let lang = L.Lang(rawValue: code) else { return }
-        L.shared.setLanguage(lang)
-        statusItem.menu = buildMenu()
-    }
 
-    @objc private func triggerCheckUpdates() {
-        Updater.shared.checkForUpdates(silent: false)
-    }
 
-    @objc private func showInfo() {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        let alert = NSAlert()
-        alert.messageText = "🐒 Monkeys"
-        alert.informativeText = """
-            🐒 Monkeys v\(version)
-
-            \(L.shared.s("p_tactile_click")) · \(L.shared.s("p_soft_tactile"))
-            \(L.shared.s("p_light_linear")) · \(L.shared.s("p_heavy_linear"))
-            \(L.shared.s("p_quiet_light")) · \(L.shared.s("p_speed"))
-            \(L.shared.s("p_smooth")) · \(L.shared.s("p_medium"))
-            \(L.shared.s("p_quiet_heavy")) · \(L.shared.s("p_typewriter"))
-            \(L.shared.s("p_bubbles")) · \(L.shared.s("p_retro"))
-            \(L.shared.s("p_monkey"))
-            """
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
-    }
 
     private func startPermissionCheckTimer() {
         permissionTimer?.invalidate()
@@ -801,32 +784,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // MARK: - Shortcut Helpers
-
-    private func getShortcutString() -> String {
-        let (keyCode, flags) = keyboardMonitor.currentShortcut
-        return stringForShortcut(keyCode: keyCode, flags: flags)
-    }
-
-    @objc private func changeShortcut() {
-        let recorder = ShortcutRecorderWindow()
-        recorder.onShortcutRecorded = { [weak self] keyCode, flags in
-            guard let self else { return }
-            self.keyboardMonitor.setShortcut(keyCode: keyCode, flags: flags)
-            self.shortcutMenuItem.title = "Scorciatoia: \(self.getShortcutString())"
-            
-            let alert = NSAlert()
-            alert.messageText = "Scorciatoia Aggiornata"
-            alert.informativeText = "Nuova scorciatoia globale impostata con successo: \(self.getShortcutString())"
-            alert.alertStyle = .informational
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
-        }
-        
-        recorder.center()
-        recorder.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
 }
 
 // MARK: - Shortcut Keyboard Layout Mapping

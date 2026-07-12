@@ -58,6 +58,7 @@ final class SettingsWindow: NSWindow {
     private var ruleVolumeCheck: NSButton!
 
     private var statsCheck: NSButton!
+    private var languagePopup: NSPopUpButton!
 
     private let builtinProfiles: [SoundProfile] = [
         .blue, .brown, .red, .black, .silentRed, .speedSilver,
@@ -172,18 +173,56 @@ final class SettingsWindow: NSWindow {
         scButton.frame = NSRect(x: 320, y: 232, width: 100, height: 30)
         v.addSubview(scButton)
 
+        // Language (moved out of the menu bar: set-once preference)
+        let langTitle = NSTextField(labelWithString: "Menu language")
+        langTitle.frame = NSRect(x: 30, y: 198, width: 130, height: 20)
+        v.addSubview(langTitle)
+
+        languagePopup = NSPopUpButton(frame: NSRect(x: 165, y: 192, width: 200, height: 28))
+        languagePopup.target = self
+        languagePopup.action = #selector(languageChanged)
+        for lang in L.Lang.allCases {
+            languagePopup.addItem(withTitle: L.shared.s("lang_\(lang.rawValue)"))
+        }
+        if let idx = L.Lang.allCases.firstIndex(of: L.shared.current) {
+            languagePopup.selectItem(at: idx)
+        }
+        v.addSubview(languagePopup)
+
         let resetButton = NSButton(title: "Reset to Defaults", target: self, action: #selector(resetDefaultsClicked))
         resetButton.frame = NSRect(x: 30, y: 30, width: 160, height: 30)
         v.addSubview(resetButton)
+
+        let updatesButton = NSButton(title: "Check for Updates…", target: self, action: #selector(checkUpdatesClicked))
+        updatesButton.frame = NSRect(x: 200, y: 30, width: 180, height: 30)
+        v.addSubview(updatesButton)
 
         let note = NSTextField(wrappingLabelWithString:
             "The menu bar and the shortcut always control the same state. Defaults: volume 70%, Tactile Brown-style profile, sounds on.")
         note.font = NSFont.systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
-        note.frame = NSRect(x: 30, y: 130, width: 460, height: 60)
+        note.frame = NSRect(x: 30, y: 128, width: 460, height: 56)
         v.addSubview(note)
 
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let versionLabel = NSTextField(labelWithString: "MonKeys v\(version)")
+        versionLabel.font = NSFont.systemFont(ofSize: 10)
+        versionLabel.textColor = .tertiaryLabelColor
+        versionLabel.frame = NSRect(x: 30, y: 6, width: 300, height: 16)
+        v.addSubview(versionLabel)
+
         return v
+    }
+
+    @objc private func languageChanged() {
+        let idx = languagePopup.indexOfSelectedItem
+        guard idx >= 0 && idx < L.Lang.allCases.count else { return }
+        L.shared.setLanguage(L.Lang.allCases[idx])
+        onGlobalChange?()
+    }
+
+    @objc private func checkUpdatesClicked() {
+        Updater.shared.checkForUpdates(silent: false)
     }
 
     @objc private func enabledChanged() {
