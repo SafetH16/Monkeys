@@ -13,10 +13,15 @@ permissions:
 jobs:
   build:
     name: Compile MonKeys (arm64, Swift 6)
-    runs-on: macos-14
+    # macos-15: default Xcode 16.x → Swift 6 toolchain (macos-14 ships
+    # Xcode 15 / Swift 5.10 and rejects `-swift-version 6`).
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Toolchain info
+        run: swiftc --version
 
       - name: Build
         run: ./build.sh
